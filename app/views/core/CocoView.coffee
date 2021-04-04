@@ -3,10 +3,12 @@ utils = require 'core/utils'
 CocoClass = require 'core/CocoClass'
 loadingScreenTemplate = require 'templates/core/loading'
 loadingErrorTemplate = require 'templates/core/loading-error'
+require('app/styles/core/loading-error.sass')
 auth = require 'core/auth'
 ViewVisibleTimer = require 'core/ViewVisibleTimer'
+storage = require 'core/storage'
+zendesk = require 'core/services/zendesk'
 
-lastToggleModalCall = 0
 visibleModal = null
 waitingModal = null
 classCount = 0
@@ -73,6 +75,7 @@ module.exports = class CocoView extends Backbone.View
     @undelegateEvents() # removes both events and subs
     view.destroy() for id, view of @subviews
     $('#modal-wrapper .modal').off 'hidden.bs.modal', @modalClosed
+    $('#modal-wrapper .modal').off 'shown.bs.modal', @modalShown
     @$el.find('.has-tooltip, [data-original-title]').tooltip 'destroy'
     @endHighlight()
     @getPointer(false).remove()
@@ -86,7 +89,7 @@ module.exports = class CocoView extends Backbone.View
     return if @viewVisibleTimer
     @viewVisibleTimer = new ViewVisibleTimer()
     @trackViewLifecycle = trackViewLifecycle
-    
+
   # Report the currently visible feature — this is the default handler for whole-view tracking
   # Views with more involved features should implement this method instead.
   currentVisiblePremiumFeature: ->
@@ -94,7 +97,7 @@ module.exports = class CocoView extends Backbone.View
       return { viewName: @.id }
     else
       return null
-  
+
   updateViewVisibleTimer: ->
     return if not @viewVisibleTimer
     visibleFeature = not @hidden and not @destroyed and @currentVisiblePremiumFeature()
@@ -112,6 +115,12 @@ module.exports = class CocoView extends Backbone.View
     editor.destroy()
 
   afterInsert: ->
+    if storage.load('sub-modal-continue')
+      subModalContinue = storage.load('sub-modal-continue')
+      storage.remove('sub-modal-continue')
+      _.defer =>
+        SubscribeModal = require 'views/core/SubscribeModal'
+        @openModalView new SubscribeModal({subModalContinue})
     @updateViewVisibleTimer()
 
   willDisappear: ->
@@ -132,7 +141,20 @@ module.exports = class CocoView extends Backbone.View
     @listenToShortcuts() if wasHidden
     view.didReappear() for id, view of @subviews
 
+
   # View Rendering
+
+  isRTL: (s) ->
+    # Hebrew is 0x0590 - 0x05FF, which is adjacent to Arabic at 0x0600 - 0x06FF
+    /[\u0590-\u06FF]/.test s
+
+  applyRTLIfNeeded: ->
+    return unless me.get('preferredLanguage') in ['he', 'ar', 'fa', 'ur']
+    @$('[data-i18n]').each (i, el) =>
+      return unless @isRTL(el.innerHTML)
+      el.dir = 'rtl'
+      $(el).parentsUntil('table, form, noscript, div:not([class~="rtl-allowed"]):not([class~="form"]):not([class~="form-group"]):not([class~="form-group"]), [dir="ltr"]').attr('dir', 'rtl')
+      $(el).parents('div.form').attr('dir', 'rtl')
 
   renderSelectors: (selectors...) ->
     newTemplate = $(@template(@getRenderData()))
@@ -141,6 +163,7 @@ module.exports = class CocoView extends Backbone.View
         $(elPair[0]).replaceWith($(elPair[1]))
     @delegateEvents()
     @$el.i18n()
+    @applyRTLIfNeeded()
 
   render: ->
     return @ unless me
@@ -164,6 +187,7 @@ module.exports = class CocoView extends Backbone.View
 
     @afterRender()
     @$el.i18n()
+    @applyRTLIfNeeded()
     @
 
   getRenderData: (context) ->
@@ -175,7 +199,7 @@ module.exports = class CocoView extends Backbone.View
     context.isMobile = @isMobile()
     context.isIE = @isIE()
     context.moment = moment
-    context.translate = $.i18n.t
+    context.translate = $.t
     context.view = @
     context._ = _
     context.document = document
@@ -194,10 +218,15 @@ module.exports = class CocoView extends Backbone.View
     _.defer => @$el.find('.nano').nanoScroller() unless @destroyed
 
   updateProgress: (progress) ->
+    return if @destroyed
+
     @loadProgress.progress = progress if progress > @loadProgress.progress
     @updateProgressBar(progress)
 
-  updateProgressBar: (progress) =>
+  updateProgressBar: (progress) ->
+    return if @destroyed
+
+    @trigger('loading:progress', progress * 100)
     prog = "#{parseInt(progress*100)}%"
     @$el?.find('.loading-container .progress-bar').css('width', prog)
 
@@ -206,7 +235,8 @@ module.exports = class CocoView extends Backbone.View
   # Error handling for loading
   onResourceLoadFailed: (e) ->
     r = e.resource
-    @stopListening @supermodel
+    if r.value
+      @stopListening @supermodel
     return if r.jqxhr?.status is 402 # payment-required failures are handled separately
     @showError(r.jqxhr)
 
@@ -215,17 +245,30 @@ module.exports = class CocoView extends Backbone.View
     noty text: msg, layout: 'center', type: 'error', killer: true, timeout: 3000
 
   onClickContactModal: (e) ->
-    if me.isStudent()
-      console.error("Student clicked contact modal.")
+    if !application.isProduction()
+      noty({
+        text: 'Contact options are only available in production',
+        layout: 'center',
+        type: 'error',
+        timeout: 5000
+      })
       return
-    if me.isTeacher()
-      if application.isProduction()
-        window.Intercom?('show')
-      else
-        alert('Teachers, Intercom widget only available in production.')
+
+    # If there is no way to open the chat, there's no point in giving the choice in the modal,
+    # so we go directly to zendesk. This could potentially be improved in the future by checking
+    # availability of support somehow, and going to zendesk if no one is there to answer drift chat.
+    openDirectContactModal = =>
+      DirectContactModal = require('app/views/core/DirectContactModal').default
+      @openModalView(new DirectContactModal())
+
+    if (me.isTeacher(true) and window?.tracker?.drift?.openChat) or me.showChinaResourceInfo()
+      openDirectContactModal()
     else
-      ContactModal = require 'views/core/ContactModal'
-      @openModalView(new ContactModal())
+      # There's an unlikely case where both Drift and Zendesk are unavailable, or Zendesk exists but fails.
+      # Since the modal communicates errors better, and shows the direct support email, we still open it.
+      zendesk.loadZendesk()
+        .then(-> if not zendesk.openZendesk() then openDirectContactModal())
+        .catch(-> openDirectContactModal())
 
   onClickLoadingErrorLoginButton: (e) ->
     e.stopPropagation() # Backbone subviews and superviews will handle this call repeatedly otherwise
@@ -243,20 +286,6 @@ module.exports = class CocoView extends Backbone.View
 
   # Modals
 
-  @lastToggleModalCall = 0
-
-  toggleModal: (e) ->
-    if $(e.currentTarget).prop('target') is '_blank'
-      return true
-    # special handler for opening modals that are dynamically loaded, rather than static in the page. It works (or should work) like Bootstrap's modals, except use coco-modal for the data-toggle value.
-    elem = $(e.target)
-    return unless elem.data('toggle') is 'coco-modal'
-    return if elem.attr('disabled')
-    target = elem.data('target')
-    Modal = require 'views/'+target
-    e.stopPropagation()
-    @openModalView new Modal supermodel: @supermodal
-
   openModalView: (modalView, softly=false) ->
     return if waitingModal # can only have one waiting at once
     if visibleModal
@@ -267,27 +296,27 @@ module.exports = class CocoView extends Backbone.View
     viewLoad = new ViewLoadTimer(modalView)
     modalView.render()
 
-    # Redirect to the woo when trying to log in or signup
-    if features.codePlay
-      if modalView.id is 'create-account-modal'
-        return document.location.href = '//lenovogamestate.com/register/?cocoId='+me.id
-      if modalView.id is 'auth-modal'
-        return document.location.href = '//lenovogamestate.com/login/?cocoId='+me.id
-
     $('#modal-wrapper').removeClass('hide').empty().append modalView.el
     modalView.afterInsert()
     visibleModal = modalView
     modalOptions = {show: true, backdrop: if modalView.closesOnClickOutside then true else 'static'}
-    $('#modal-wrapper .modal').modal(modalOptions).on 'hidden.bs.modal', @modalClosed
+    if typeof modalView.closesOnEscape is 'boolean' and modalView.closesOnEscape is false # by default, closes on escape, i.e. if modalView.closesOnEscape = undefined
+      modalOptions.keyboard = false
+    modalRef = $('#modal-wrapper .modal').modal(modalOptions)
+    modalRef.on 'hidden.bs.modal', @modalClosed
+    modalRef.on 'shown.bs.modal', @modalShown
     window.currentModal = modalView
     @getRootView().stopListeningToShortcuts(true)
     Backbone.Mediator.publish 'modal:opened', {}
     viewLoad.record()
     return modalView
 
+  modalShown: =>
+    visibleModal.trigger('shown')
+
   modalClosed: =>
     visibleModal.willDisappear() if visibleModal
-    visibleModal.destroy()
+    visibleModal?.destroy()
     visibleModal = null
     window.currentModal = null
     #$('#modal-wrapper .modal').off 'hidden.bs.modal', @modalClosed
@@ -303,12 +332,15 @@ module.exports = class CocoView extends Backbone.View
   # Loading RootViews
 
   showLoading: ($el=@$el) ->
+    @trigger('loading:show')
     $el.find('>').addClass('hidden')
     $el.append(loadingScreenTemplate()).i18n()
+    @applyRTLIfNeeded()
     @_lastLoading = $el
 
   hideLoading: ->
     return unless @_lastLoading?
+    @trigger('loading:hide')
     @_lastLoading.find('.loading-screen').remove()
     @_lastLoading.find('>').removeClass('hidden')
     @_lastLoading = null
@@ -322,6 +354,7 @@ module.exports = class CocoView extends Backbone.View
     }
     @_lastLoading.find('.loading-screen').replaceWith((loadingErrorTemplate(context)))
     @_lastLoading.i18n()
+    @applyRTLIfNeeded()
 
   forumLink: ->
     link = 'http://discourse.codecombat.com/'
@@ -485,9 +518,6 @@ module.exports = class CocoView extends Backbone.View
 
   # Utilities
 
-  getQueryVariable: (param, defaultValue) -> CocoView.getQueryVariable(param, defaultValue)
-  @getQueryVariable: (param, defaultValue) -> utils.getQueryVariable(param, defaultValue)  # Moved to utils; TODO finish migrating
-
   getRootView: ->
     view = @
     view = view.parent while view.parent?
@@ -497,9 +527,7 @@ module.exports = class CocoView extends Backbone.View
     ua = navigator.userAgent or navigator.vendor or window.opera
     return mobileRELong.test(ua) or mobileREShort.test(ua.substr(0, 4))
 
-  isIE: ->
-    # http://stackoverflow.com/questions/19999388/jquery-check-if-user-is-using-ie
-    navigator.userAgent.indexOf('MSIE') > 0 or !!navigator.userAgent.match(/Trident.*rv\:11\./)
+  isIE: utils.isIE
 
   isMac: ->
     navigator.platform.toUpperCase().indexOf('MAC') isnt -1
@@ -513,13 +541,6 @@ module.exports = class CocoView extends Backbone.View
 
   isFirefox: ->
     navigator.userAgent.toLowerCase().indexOf('firefox') isnt -1
-
-  initSlider: ($el, startValue, changeCallback) ->
-    slider = $el.slider({animate: 'fast'})
-    slider.slider('value', startValue)
-    slider.on('slide', changeCallback)
-    slider.on('slidechange', changeCallback)
-    slider
 
   scrollToLink: (link, speed=300) ->
     scrollTo = $(link).offset().top
@@ -561,9 +582,11 @@ module.exports = class CocoView extends Backbone.View
   tryCopy: ->
     try
       document.execCommand('copy')
+      message = 'Copied to clipboard'
+      noty text: message, layout: 'topCenter', type: 'info', killer: false, timeout: 2000
     catch err
       message = 'Oops, unable to copy'
-      noty text: message, layout: 'topCenter', type: 'error', killer: false
+      noty text: message, layout: 'topCenter', type: 'error', killer: false, timeout: 3000
 
   wait: (event) -> new Promise((resolve) => @once(event, resolve))
 

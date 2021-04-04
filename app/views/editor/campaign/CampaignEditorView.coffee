@@ -1,3 +1,4 @@
+require('app/styles/editor/campaign/campaign-editor-view.sass')
 RootView = require 'views/core/RootView'
 Campaign = require 'models/Campaign'
 Level = require 'models/Level'
@@ -5,6 +6,7 @@ Achievement = require 'models/Achievement'
 ThangType = require 'models/ThangType'
 CampaignView = require 'views/play/CampaignView'
 CocoCollection = require 'collections/CocoCollection'
+require('lib/setupTreema')
 treemaExt = require 'core/treema-ext'
 utils = require 'core/utils'
 RelatedAchievementsCollection = require 'collections/RelatedAchievementsCollection'
@@ -12,8 +14,12 @@ CampaignAnalyticsModal = require './CampaignAnalyticsModal'
 CampaignLevelView = require './CampaignLevelView'
 SaveCampaignModal = require './SaveCampaignModal'
 PatchesView = require 'views/editor/PatchesView'
+RevertModal = require 'views/modal/RevertModal'
+modelDeltas = require 'lib/modelDeltas'
+require('vendor/scripts/jquery-ui-1.11.1.custom')
+require('vendor/styles/jquery-ui-1.11.1.custom.css')
 
-require 'game-libraries'
+require 'lib/game-libraries'
 
 achievementProject = ['related', 'rewards', 'name', 'slug']
 thangTypeProject = ['name', 'original']
@@ -27,6 +33,7 @@ module.exports = class CampaignEditorView extends RootView
     'click #analytics-button': 'onClickAnalyticsButton'
     'click #save-button': 'onClickSaveButton'
     'click #patches-button': 'onClickPatches'
+    'click [data-toggle="coco-modal"][data-target="modal/RevertModal"]': 'openRevertModal'
 
   subscriptions:
     'editor:campaign-analytics-modal-closed' : 'onAnalyticsModalClosed'
@@ -62,9 +69,13 @@ module.exports = class CampaignEditorView extends RootView
     @listenToOnce @levels, 'sync', @onFundamentalLoaded
     @listenToOnce @achievements, 'sync', @onFundamentalLoaded
 
+  openRevertModal: (e) ->
+    e.stopPropagation()
+    @openModalView new RevertModal()
+
   onLeaveMessage: ->
     for model in @toSave.models
-      diff = model.getDelta()
+      diff = modelDeltas.getDelta(model)
       if _.size(diff)
         console.log 'model, diff', model, diff
         return 'You have changes!'
@@ -86,7 +97,7 @@ module.exports = class CampaignEditorView extends RootView
     # Load any levels which haven't been denormalized into our campaign.
     return unless @campaign.loaded and @levels.loaded and @achievements.loaded
     @loadMissingLevelsAndRelatedModels()
-    
+
   loadMissingLevelsAndRelatedModels: ->
     promises = []
     for level in _.values(@campaign.get('levels'))
@@ -115,6 +126,10 @@ module.exports = class CampaignEditorView extends RootView
     @updateCampaignLevels()
     @campaignView.render()
     super()
+    if window.location.hash
+      levelSlug = window.location.hash.substring(1)
+      levelOriginal = _.find(@campaign.get('levels'), slug: levelSlug).original
+      @openCampaignLevelView @supermodel.getModelByOriginal Level, levelOriginal
 
   updateCampaignLevels: ->
     @toSave.add @campaign if @campaign.hasLocalChanges()
@@ -131,8 +146,6 @@ module.exports = class CampaignEditorView extends RootView
       # Save campaign to level if it's a main 'hero' campaign so HeroVictoryModal knows where to return.
       # (Not if it's a defaulted, typeless campaign like game-dev-hoc or auditions.)
       campaignLevel.campaign = @campaign.get 'slug' if @campaign.get('type') is 'hero'
-      # Save campaign index to level if it's a course campaign, since we show linear level order numbers for course levels.
-      campaignLevel.campaignIndex = (@levels.models.length - levelIndex - 1) if @campaign.get('type', true) is 'course'
       campaignLevels[levelOriginal] = campaignLevel
 
     @campaign.set('levels', campaignLevels)
@@ -230,6 +243,7 @@ module.exports = class CampaignEditorView extends RootView
       nodeClasses:
         levels: LevelsNode
         level: LevelNode
+        nextLevel: NextLevelNode
         campaigns: CampaignsNode
         campaign: CampaignNode
         achievement: AchievementNode
@@ -383,6 +397,12 @@ class LevelNode extends TreemaObjectNode
   populateData: ->
     return if @data.name?
     data = _.pick LevelsNode.levels[@keyForParent].attributes, Campaign.denormalizedLevelProperties
+    _.extend @data, data
+
+class NextLevelNode extends LevelNode
+  populateData: ->
+    return if @data.name?
+    data = _.pick LevelsNode.levels[@keyForParent].attributes, ['original', 'name', 'slug', 'type']
     _.extend @data, data
 
 class CampaignsNode extends TreemaObjectNode

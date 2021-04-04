@@ -1,3 +1,4 @@
+require('app/styles/account/invoices-view.sass')
 RootView = require 'views/core/RootView'
 template = require 'templates/account/invoices-view'
 stripeHandler = require 'core/services/stripe'
@@ -19,6 +20,9 @@ module.exports = class InvoicesView extends RootView
     super(options)
     @amount = utils.getQueryVariable('a', 0)
     @description = utils.getQueryVariable('d', '')
+
+  getMeta: ->
+    title: $.i18n.t 'account.invoices_title'
 
   onPayButton: ->
     @description = $('#description').val()

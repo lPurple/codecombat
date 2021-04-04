@@ -1,6 +1,9 @@
+require('app/styles/play/modal/play-items-modal.sass')
 ModalView = require 'views/core/ModalView'
 template = require 'templates/play/modal/play-items-modal'
 buyGemsPromptTemplate = require 'templates/play/modal/buy-gems-prompt'
+earnGemsPromptTemplate = require 'templates/play/modal/earn-gems-prompt'
+subscribeForGemsPrompt = require 'templates/play/modal/subscribe-for-gems-prompt'
 ItemDetailsView = require './ItemDetailsView'
 BuyGemsModal = require 'views/play/modal/BuyGemsModal'
 CreateAccountModal = require 'views/core/CreateAccountModal'
@@ -52,6 +55,7 @@ module.exports = class PlayItemsModal extends ModalView
     'shown.bs.tab': 'onTabClicked'
     'click .unlock-button': 'onUnlockButtonClicked'
     'click .subscribe-button': 'onSubscribeButtonClicked'
+    'click .start-subscription-button': 'onSubscribeButtonClicked'
     'click .buy-gems-prompt-button': 'onBuyGemsPromptButtonClicked'
     'click #close-modal': 'hide'
     'click': 'onClickedSomewhere'
@@ -180,7 +184,7 @@ module.exports = class PlayItemsModal extends ModalView
       return { viewName: @.id, featureName: 'filter-ranger' }
     else
       return null
-  
+
   onTabClicked: (e) ->
     @playSound 'game-menu-tab-switch'
     nano = $($(e.target).attr('href')).find('.nano')
@@ -216,7 +220,7 @@ module.exports = class PlayItemsModal extends ModalView
     affordable = cost <= gemsOwned
     if not affordable
       @playSound 'menu-button-click'
-      @askToBuyGems button unless me.freeOnly()
+      @askToBuyGemsOrSubscribe button unless me.freeOnly() or application.getHocCampaign()
     else if button.hasClass('confirm')
       @playSound 'menu-button-unlock-end'
       purchase = Purchase.makeFor(item)
@@ -250,9 +254,16 @@ module.exports = class PlayItemsModal extends ModalView
     createAccountModal = new CreateAccountModal supermodel: @supermodel
     return @openModalView createAccountModal
 
-  askToBuyGems: (unlockButton) ->
+  askToBuyGemsOrSubscribe: (unlockButton) ->
     @$el.find('.unlock-button').popover 'destroy'
-    popoverTemplate = buyGemsPromptTemplate {}
+    if me.canBuyGems()
+      popoverTemplate = buyGemsPromptTemplate {}
+    else
+      if not me.hasSubscription() # user does not have subscription ask him to subscribe to get more gems, china infra does not have 'buy gems' option
+        popoverTemplate = subscribeForGemsPrompt {}
+      else # user has subscription and yet not enough gems, just ask him to keep playing for more gems
+        popoverTemplate = earnGemsPromptTemplate {}
+
     unlockButton.popover(
       animation: true
       trigger: 'manual'
@@ -262,7 +273,8 @@ module.exports = class PlayItemsModal extends ModalView
       template: popoverTemplate
     ).popover 'show'
     popover = unlockButton.data('bs.popover')
-    popover?.$tip?.i18n()
+    popover?.$tip?.i18n()  # Doesn't work
+    @applyRTLIfNeeded()
 
   onBuyGemsPromptButtonClicked: (e) ->
     @playSound 'menu-button-click'

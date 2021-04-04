@@ -1,3 +1,4 @@
+require('app/styles/courses/teacher-classes-view.sass')
 RootView = require 'views/core/RootView'
 template = require 'templates/courses/teacher-classes-view'
 Classroom = require 'models/Classroom'
@@ -10,15 +11,28 @@ CourseInstance = require 'models/CourseInstance'
 CourseInstances = require 'collections/CourseInstances'
 ClassroomSettingsModal = require 'views/courses/ClassroomSettingsModal'
 CourseNagSubview = require 'views/teachers/CourseNagSubview'
-InviteToClassroomModal = require 'views/courses/InviteToClassroomModal'
 Prepaids = require 'collections/Prepaids'
+Users = require 'collections/Users'
 User = require 'models/User'
 utils = require 'core/utils'
+storage = require 'core/storage'
+GoogleClassroomHandler = require('core/social-handlers/GoogleClassroomHandler')
+co = require('co')
+OzariaEncouragementModal = require('app/views/teachers/OzariaEncouragementModal').default
+PanelTryOzaria = require('app/components/teacher/PanelTryOzaria').default
 
 helper = require 'lib/coursesHelper'
 
 translateWithMarkdown = (label) ->
   marked.inlineLexer $.i18n.t(label), []
+
+# TODO: if this proves useful, make a simple admin page with a Treema for editing office hours in db
+officeHours = [
+  {time: moment('2018-02-28 12:00-08').toDate(), link: 'https://zoom.us/meeting/register/307c335ddb1ee6ef7510d14dfea9e911', host: 'David', name: 'CodeCombat for Beginner Teachers'}
+  {time: moment('2018-03-07 12:00-08').toDate(), link: 'https://zoom.us/meeting/register/a1a6f5f4eb7a0a387c24e00bf0acd2b8', host: 'Nolan', name: 'CodeCombat: Beyond Block-Based Coding'}
+  {time: moment('2018-03-15 12:30-08').toDate(), link: 'https://zoom.us/meeting/register/16f0a6b4122087667c24e00bf0acd2b8', host: 'Sean', name: 'Building Student Engagement with CodeCombat'}
+  {time: moment('2018-03-21 12:00-08').toDate(), link: 'https://zoom.us/meeting/register/4e7eb093f8689e21c5b9141539e44ee6', host: 'Liz', name: 'CodeCombat for Beginner Teachers'}
+]
 
 module.exports = class TeacherClassesView extends RootView
   id: 'teacher-classes-view'
@@ -78,15 +92,21 @@ module.exports = class TeacherClassesView extends RootView
     'click .edit-classroom': 'onClickEditClassroom'
     'click .archive-classroom': 'onClickArchiveClassroom'
     'click .unarchive-classroom': 'onClickUnarchiveClassroom'
-    'click .add-students-btn': 'onClickAddStudentsButton'
     'click .create-classroom-btn': 'openNewClassroomModal'
     'click .create-teacher-btn': 'onClickCreateTeacherButton'
     'click .update-teacher-btn': 'onClickUpdateTeacherButton'
     'click .view-class-btn': 'onClickViewClassButton'
     'click .see-all-quests': 'onClickSeeAllQuests'
     'click .see-less-quests': 'onClickSeeLessQuests'
+    'click .see-all-office-hours': 'onClickSeeAllOfficeHours'
+    'click .see-less-office-hours': 'onClickSeeLessOfficeHours'
+    'click .see-no-office-hours': 'onClickSeeNoOfficeHours'
+    'click .try-ozaria a': 'tryOzariaLinkClicked'
 
-  getTitle: -> $.i18n.t 'teacher.my_classes'
+  getMeta: ->
+    {
+      title: $.i18n.t 'teacher.my_classes'
+    }
 
   initialize: (options) ->
     super(options)
@@ -97,10 +117,22 @@ module.exports = class TeacherClassesView extends RootView
     @supermodel.trackCollection(@classrooms)
     @listenTo @classrooms, 'sync', ->
       for classroom in @classrooms.models
+        continue if classroom.get('archived')
         classroom.sessions = new LevelSessions()
-        jqxhrs = classroom.sessions.fetchForAllClassroomMembers(classroom)
-        if jqxhrs.length > 0
-          @supermodel.trackRequests(jqxhrs)
+        Promise.all(classroom.sessions.fetchForAllClassroomMembers(
+          classroom,
+          {
+            data: {
+              project: 'state.complete,level,creator,changed,created,dateFirstCompleted,submitted,codeConcepts'
+            }
+          }
+        ))
+        .then (results) =>
+          return if @destroyed
+          helper.calculateDots(@classrooms, @courses, @courseInstances)
+          @calculateQuestCompletion()
+          @render()
+
     window.tracker?.trackEvent 'Teachers Classes Loaded', category: 'Teachers', ['Mixpanel']
 
     @courses = new Courses()
@@ -114,12 +146,34 @@ module.exports = class TeacherClassesView extends RootView
     @prepaids = new Prepaids()
     @supermodel.trackRequest @prepaids.fetchByCreator(me.id)
 
+    earliestHourTime = new Date() - 60 * 60 * 1000
+    latestHourTime = new Date() - -21 * 24 * 60 * 60 * 1000
+    @upcomingOfficeHours = _.sortBy (oh for oh in officeHours when earliestHourTime < oh.time < latestHourTime), 'time'
+    @howManyOfficeHours = if storage.load('hide-office-hours') then 'none' else 'some'
+    me.getClientCreatorPermissions()?.then(() =>
+      @calculateQuestCompletion()
+      @render?()
+    )
+
+    administratingTeacherIds = me.get('administratingTeachers') || []
+
+    @administratingTeachers = new Users()
+    if administratingTeacherIds.length > 0
+      req = @administratingTeachers.fetchByIds(administratingTeacherIds)
+      @supermodel.trackRequest req
+
     # Level Sessions loaded after onLoaded to prevent race condition in calculateDots
 
   afterRender: ->
     super()
-    @courseNagSubview = new CourseNagSubview()
-    @insertSubView(@courseNagSubview)
+    unless @courseNagSubview
+      @courseNagSubview = new CourseNagSubview()
+      @insertSubView(@courseNagSubview)
+
+    @panelTryOzaria = new PanelTryOzaria({
+      el: @$('.try-ozaria')[0]
+    })
+
     $('.progress-dot').each (i, el) ->
       dot = $(el)
       dot.tooltip({
@@ -127,22 +181,30 @@ module.exports = class TeacherClassesView extends RootView
         container: dot
       })
 
+  destroy: ->
+    @cleanupEncouragementModal()
+    super()
+
+  cleanupEncouragementModal: ->
+    if @ozariaEncouragementModal
+      @ozariaEncouragementModal.$destroy()
+      @ozariaEncouragementModalContainer.remove()
+
   calculateQuestCompletion: ->
     @teacherQuestData['create_classroom'].complete = @classrooms.length > 0
     for classroom in @classrooms.models
-      continue unless classroom.get('members')?.length > 0
+      continue unless classroom.get('members')?.length > 0 and classroom.sessions
       classCompletion = {}
       classCompletion[key] = 0 for key in Object.keys(@teacherQuestData)
       students = classroom.get('members')?.length
 
-      
       kithgardGatesCompletes = 0
       wakkaMaulCompletes = 0
       for session in classroom.sessions.models
         if session.get('level')?.original is '541c9a30c6362edfb0f34479' # kithgard-gates
           ++classCompletion['kithgard_gates_100']
         if session.get('level')?.original is '5630eab0c0fcbd86057cc2f8' # wakka-maul
-          ++classCompletion['wakka_maul_100']            
+          ++classCompletion['wakka_maul_100']
         continue unless session.get('state')?.complete
         if session.get('level')?.original is '5411cb3769152f1707be029c' # dungeons-of-kithgard
           ++classCompletion['teach_methods']
@@ -154,11 +216,11 @@ module.exports = class TeacherClassesView extends RootView
           ++classCompletion['teach_variables']
 
       classCompletion[k] /= students for k of classCompletion
-        
+
 
 
       classCompletion['add_students'] = if students > 0 then 1.0 else 0.0
-      if me.get('enrollmentRequestSent') or @prepaids.length > 0
+      if @prepaids.length > 0 or !me.canManageLicensesViaUI()
         classCompletion['reach_gamedev'] = 1.0
       else
         classCompletion['reach_gamedev'] = 0.0
@@ -170,8 +232,15 @@ module.exports = class TeacherClassesView extends RootView
     helper.calculateDots(@classrooms, @courses, @courseInstances)
     @calculateQuestCompletion()
 
-    if me.isTeacher() and not @classrooms.length
+    showOzariaEncouragementModal = window.localStorage.getItem('showOzariaEncouragementModal')
+    if showOzariaEncouragementModal
+      window.localStorage.removeItem('showOzariaEncouragementModal')
+
+    if showOzariaEncouragementModal
+      @openOzariaEncouragementModal()
+    else if me.isTeacher() and not @classrooms.length
       @openNewClassroomModal()
+
     super()
 
   onClickEditClassroom: (e) ->
@@ -193,9 +262,60 @@ module.exports = class TeacherClassesView extends RootView
     @listenToOnce modal.classroom, 'sync', ->
       window.tracker?.trackEvent 'Teachers Classes Create New Class Finished', category: 'Teachers', ['Mixpanel']
       @classrooms.add(modal.classroom)
+      if modal.classroom.isGoogleClassroom()
+        GoogleClassroomHandler.markAsImported(classroom.get("googleClassroomId")).then(() => @render()).catch((e) => console.error(e))
+      classroom = modal.classroom
       @addFreeCourseInstances()
-      @calculateQuestCompletion()
-      @render()
+      .then(() =>
+        if classroom.isGoogleClassroom()
+          @importStudents(classroom)
+          .then (importedStudents) =>
+            @addImportedStudents(classroom, importedStudents)
+          , (_e) => {}
+      , (err) =>
+        if classroom.isGoogleClassroom()
+          noty text: 'Could not import students', layout: 'topCenter', timeout: 3000, type: 'error'
+      )
+      .then () =>
+        @calculateQuestCompletion()
+        @render()
+
+  tryOzariaLinkClicked: ->
+    window.tracker.trackEvent('Teacher Dashboard Try Ozaria Link Clicked', category: 'Teachers')
+    @openOzariaEncouragementModal()
+
+  openOzariaEncouragementModal: () ->
+    # The modal container needs to exist outside of $el because the loading screen swap deletes the holder element
+    if @ozariaEncouragementModalContainer
+      @ozariaEncouragementModalContainer.remove()
+
+    @ozariaEncouragementModalContainer = document.createElement('div')
+    document.body.appendChild(@ozariaEncouragementModalContainer)
+
+    @ozariaEncouragementModal = new OzariaEncouragementModal({ el: @ozariaEncouragementModalContainer })
+
+  importStudents: (classroom) ->
+    GoogleClassroomHandler.importStudentsToClassroom(classroom)
+    .then (importedStudents) =>
+      if importedStudents.length > 0
+        console.debug("Students imported to classroom:", importedStudents)
+        return Promise.resolve(importedStudents)
+      else
+        noty text: 'No new students imported', layout: 'topCenter', timeout: 3000, type: 'error'
+        return Promise.reject()
+    .catch (err) =>
+      noty text: err or 'Error in importing students', layout: 'topCenter', timeout: 3000, type: 'error'
+      return Promise.reject()
+
+  # Add imported students to @classrooms and @courseInstances so that they are rendered on the screen
+  addImportedStudents: (classroom, importedStudents) ->
+    cl = @classrooms.models.find((c) => c.get("_id") == classroom.get("_id"))
+    importedStudents.forEach((i) => cl.get("members").push(i._id))
+    for course in @courses.models
+      continue if not course.get('free')
+      courseInstance = @courseInstances.findWhere({classroomID: classroom.id, courseID: course.id})
+      if courseInstance
+        importedStudents.forEach((i) => courseInstance.get("members").push(i._id))
 
   onClickCreateTeacherButton: (e) ->
     window.tracker?.trackEvent $(e.target).data('event-action'), category: 'Teachers', ['Mixpanel']
@@ -204,16 +324,6 @@ module.exports = class TeacherClassesView extends RootView
   onClickUpdateTeacherButton: (e) ->
     window.tracker?.trackEvent $(e.target).data('event-action'), category: 'Teachers', ['Mixpanel']
     application.router.navigate("/teachers/update-account", { trigger: true })
-
-  onClickAddStudentsButton: (e) ->
-    window.tracker?.trackEvent 'Teachers Classes Add Students Started', category: 'Teachers', ['Mixpanel']
-    classroomID = $(e.currentTarget).data('classroom-id')
-    classroom = @classrooms.get(classroomID)
-    modal = new InviteToClassroomModal({ classroom: classroom })
-    @openModalView(modal)
-    @listenToOnce modal, 'hide', ->
-      @render()
-      @calculateQuestCompletion()
 
   onClickArchiveClassroom: (e) ->
     return unless me.id is @teacherID # Viewing page as admin
@@ -242,24 +352,31 @@ module.exports = class TeacherClassesView extends RootView
     window.tracker?.trackEvent $(e.target).data('event-action'), category: 'Teachers', classroomID: classroomID, ['Mixpanel']
     application.router.navigate("/teachers/classes/#{classroomID}", { trigger: true })
 
-  addFreeCourseInstances: ->
+  addFreeCourseInstances: co.wrap ->
     # so that when students join the classroom, they can automatically get free courses
     # non-free courses are generated when the teacher first adds a student to them
-    for classroom in @classrooms.models
-      for course in @courses.models
-        continue if not course.get('free')
-        courseInstance = @courseInstances.findWhere({classroomID: classroom.id, courseID: course.id})
-        if not courseInstance
-          courseInstance = new CourseInstance({
-            classroomID: classroom.id
-            courseID: course.id
-          })
-          # TODO: figure out a better way to get around triggering validation errors for properties
-          # that the server will end up filling in, like an empty members array, ownerID
-          courseInstance.save(null, {validate: false})
-          @courseInstances.add(courseInstance)
-          @listenToOnce courseInstance, 'sync', @addFreeCourseInstances
-          return
+    try
+      promises = []
+      for classroom in @classrooms.models
+        for course in @courses.models
+          continue if not course.get('free')
+          courseInstance = @courseInstances.findWhere({classroomID: classroom.id, courseID: course.id})
+          if not courseInstance
+            courseInstance = new CourseInstance({
+              classroomID: classroom.id
+              courseID: course.id
+            })
+            # TODO: figure out a better way to get around triggering validation errors for properties
+            # that the server will end up filling in, like an empty members array, ownerID
+            promises.push(new Promise(courseInstance.save(null, {validate: false}).then))
+      if (promises.length > 0)
+        courseInstances = yield Promise.all(promises)
+        @courseInstances.add(courseInstances) if courseInstances.length > 0
+      return
+    catch e
+      console.error("Error in adding free course instances")
+      return Promise.reject()
+
 
   onClickSeeAllQuests: (e) =>
     $(e.target).hide()
@@ -270,3 +387,16 @@ module.exports = class TeacherClassesView extends RootView
     $(e.target).hide()
     @$el.find('.see-all-quests').show()
     @$el.find('.quest.hide-revealed').addClass('hide').removeClass('hide-revealed')
+
+  onClickSeeAllOfficeHours: (e) ->
+    @howManyOfficeHours = 'all'
+    @renderSelectors '#office-hours'
+
+  onClickSeeLessOfficeHours: (e) ->
+    @howManyOfficeHours = 'some'
+    @renderSelectors '#office-hours'
+
+  onClickSeeNoOfficeHours: (e) ->
+    @howManyOfficeHours = 'none'
+    @renderSelectors '#office-hours'
+    storage.save 'hide-office-hours', true

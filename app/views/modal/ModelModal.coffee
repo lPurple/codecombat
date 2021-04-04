@@ -1,6 +1,7 @@
+require('app/styles/modal/model-modal.sass')
 ModalView = require 'views/core/ModalView'
 template = require 'templates/modal/model-modal'
-require 'vendor/treema'
+require 'lib/setupTreema'
 
 module.exports = class ModelModal extends ModalView
   id: 'model-modal'
@@ -14,7 +15,8 @@ module.exports = class ModelModal extends ModalView
     @models = options.models
     for model in @models when not model.loaded
       @supermodel.loadModel model
-      model.fetch cache: false
+      model.fetch cache: false, error: (error) ->
+        console.log 'Error loading', model, error
 
   afterRender: ->
     return unless @supermodel.finished()
@@ -40,8 +42,8 @@ module.exports = class ModelModal extends ModalView
       child?.open()
       if child and dish is 'code' and model.type() is 'LevelSession' and team = modelTreema.get('team')
         desserts = {
-          humans: ['programmable-tharin', 'programmable-librarian']
-          ogres: ['programmable-brawler', 'programmable-shaman']
+          humans: ['hero-placeholder']
+          ogres: ['hero-placeholder-1']
         }[team]
         for dessert in desserts
           child.childrenTreemas[dessert]?.open()

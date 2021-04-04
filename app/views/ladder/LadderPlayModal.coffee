@@ -1,3 +1,4 @@
+require('app/styles/play/ladder/play_modal.sass')
 ModalView = require 'views/core/ModalView'
 template = require 'templates/play/ladder/play_modal'
 ThangType = require 'models/ThangType'
@@ -26,6 +27,7 @@ module.exports = class LadderPlayModal extends ModalView
 
   initialize: (options, @level, @session, @team) ->
     @otherTeam = if @team is 'ogres' then 'humans' else 'ogres'
+    @otherTeam = 'humans' if @level.isType('ladder')
     @wizardType = ThangType.loadUniversalWizard()
     @startLoadingChallengersMaybe()
     @levelID = @level.get('slug') or @level.id
@@ -35,7 +37,9 @@ module.exports = class LadderPlayModal extends ModalView
       {id: 'javascript', name: 'JavaScript'}
       {id: 'coffeescript', name: 'CoffeeScript (Experimental)'}
       {id: 'lua', name: 'Lua'}
-      {id: 'java', name: 'Java'}
+      # TODO: Bring java back once it's supported
+      # {id: 'java', name: 'Java'}
+      {id: 'cpp', name: 'C++'}
     ]
     @myName = me.get('name') || 'Newcomer'
 
@@ -81,6 +85,7 @@ module.exports = class LadderPlayModal extends ModalView
           {colorConfig: challenger.opponentWizard.colorConfig})
 
     success = (@nameMap) =>
+      return if @destroyed
       for challenger in _.values(@challengers)
         challenger.opponentName = @nameMap[challenger.opponentID]?.name or 'Anonymous'
         challenger.opponentWizard = @nameMap[challenger.opponentID]?.wizard or {}
@@ -104,6 +109,7 @@ module.exports = class LadderPlayModal extends ModalView
   finishRendering: ->
     return if @destroyed
     @checkTutorialLevelExists (exists) =>
+      return if @destroyed
       @tutorialLevelExists = exists
       @render()
       @maybeShowTutorialButtons()
@@ -124,6 +130,7 @@ module.exports = class LadderPlayModal extends ModalView
     @$el.find('#noob-view').addClass('secret')
 
   checkTutorialLevelExists: (cb) ->
+    return  # We don't have any tutorials, currently. TODO: should remove this or update to create more tutorials.
     levelID = @level.get('slug') or @level.id
     tutorialLevelID = "#{levelID}-tutorial"
     success = => cb true

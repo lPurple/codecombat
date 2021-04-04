@@ -63,15 +63,16 @@ var console = {
 console.error = console.warn = console.info = console.debug = console.log;
 self.console = console;
 
+// Webpack TODO: Cache-bust these! (especially world.js)
 self.importScripts('/javascripts/lodash.js', '/javascripts/world.js', '/javascripts/aether.js');
 try {
   //Detect very modern javascript support.
   (0,eval("'use strict'; let test = WeakMap && (class Test { *gen(a=7) { yield yield * () => true ; } });"));
   console.log("Modern javascript detected, aw yeah!");
-  self.importScripts('/javascripts/esper.modern.js');  
+  self.importScripts('/javascripts/esper.modern.js');
 } catch (e) {
   console.log("Legacy javascript detected, falling back...", e.message);
-  self.importScripts('/javascripts/esper.js');  
+  self.importScripts('/javascripts/esper.js');
 }
 
 
@@ -81,7 +82,15 @@ var languagesImported = {};
 var ensureLanguageImported = function(language) {
   if (languagesImported[language]) return;
   if (language === 'javascript' || language === 'html') return;  // Only has JSHint, but we don't need to lint here.
-  myImportScripts("/javascripts/app/vendor/aether-" + language + ".js");
+  //Detect very modern javascript support.
+  try {
+    (0,eval("'use strict'; let test = WeakMap && (class Test { *gen(a=7) { yield yield * () => true ; } });"));
+    console.log(`Using modern language plugin: ${language}`);
+    myImportScripts("/javascripts/app/vendor/aether-" + language + ".modern.js");
+  } catch (e) {
+    console.log("Legacy javascript detected, using legacy plugin for ", language, e.message);
+    myImportScripts("/javascripts/app/vendor/aether-" + language + ".js");
+  }
   languagesImported[language] = true;
 };
 
@@ -116,18 +125,18 @@ self.transferableSupported = function transferableSupported() {
   return self._transferableSupported = false;
 };
 
-var World = self.require('lib/world/world');
-var GoalManager = self.require('lib/world/GoalManager');
+var World = self.libWorldRequire('lib/world/world');
+var GoalManager = self.libWorldRequire('lib/world/GoalManager');
 
-Aether.addGlobal('Vector', require('lib/world/vector'));
+Aether.addGlobal('Vector', self.libWorldRequire('lib/world/vector'));
 Aether.addGlobal('_', _);
 
 var serializedClasses = {
-    "Thang": self.require('lib/world/thang'),
-    "Vector": self.require('lib/world/vector'),
-    "Rectangle": self.require('lib/world/rectangle'),
-    "Ellipse": self.require('lib/world/ellipse'),
-    "LineSegment": self.require('lib/world/line_segment')
+    "Thang": self.libWorldRequire('lib/world/thang'),
+    "Vector": self.libWorldRequire('lib/world/vector'),
+    "Rectangle": self.libWorldRequire('lib/world/rectangle'),
+    "Ellipse": self.libWorldRequire('lib/world/ellipse'),
+    "LineSegment": self.libWorldRequire('lib/world/line_segment')
 };
 self.currentUserCodeMapCopy = "";
 self.currentDebugWorldFrame = 0;
@@ -321,6 +330,7 @@ self.setupDebugWorldToRunUntilFrame = function (args) {
             self.debugWorld.flagHistory = args.flagHistory;
             self.debugWorld.realTimeInputEvents = args.realTimeInputEvents;
             self.debugWorld.difficulty = args.difficulty;
+            self.debugWorld.language = args.language || 'en-US';
             if (args.level)
                 self.debugWorld.loadFromLevel(args.level, true);
             self.debugWorld.debugging = true;
@@ -384,6 +394,7 @@ self.runWorld = function runWorld(args) {
     self.world.flagHistory = args.flagHistory || [];
     self.world.realTimeInputEvents = args.realTimeInputEvents || [];
     self.world.difficulty = args.difficulty || 0;
+    self.world.language = args.language || 'en-US';
     if(args.level)
       self.world.loadFromLevel(args.level, true);
     self.world.preloading = args.preload;

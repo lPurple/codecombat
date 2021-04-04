@@ -1,3 +1,4 @@
+require('app/styles/editor/level/tasks-tab.sass')
 CocoView = require 'views/core/CocoView'
 template = require 'templates/editor/level/tasks-tab'
 Level = require 'models/Level'
@@ -133,7 +134,7 @@ module.exports = class TasksTabView extends CocoView
 
 notWebDev = ['hero', 'course', 'hero-ladder', 'course-ladder', 'game-dev']
 heroBased = ['hero', 'course', 'hero-ladder', 'course-ladder']
-ladder = ['hero-ladder', 'course-ladder']
+ladder = ['hero-ladder', 'course-ladder', 'ladder']
 
 defaultTasks = [
   {name: 'Set level type.', complete: (level) -> level.get('type')}
@@ -188,9 +189,11 @@ defaultTasks = [
   {name: 'Create two sample projects.', types: ['game-dev', 'web-dev']}
   {name: 'Write Lua sample code.', types: notWebDev, optional: true, complete: (level) -> level.getSampleCode().lua}
   {name: 'Write Java sample code.', types: notWebDev, optional: true, complete: (level) -> level.getSampleCode().java}
+  {name: 'Write C++ sample code.', types: notWebDev, optional: true, complete: (level) -> level.getSampleCode().cpp}
   {name: 'Write CoffeeScript sample code.', types: notWebDev, optional: true, complete: (level) -> level.getSampleCode().coffeescript}
   {name: 'Write Lua solution.', types: notWebDev, optional: true, complete: (level) -> _.find(level.getSolutions(), language: 'lua')}
   {name: 'Write Java solution.', types: notWebDev, optional: true, complete: (level) -> _.find(level.getSolutions(), language: 'java')}
+  {name: 'Write C++ solution.', types: notWebDev, optional: true, complete: (level) -> _.find(level.getSolutions(), language: 'cpp')}
   {name: 'Write CoffeeScript solution.', types: notWebDev, optional: true, complete: (level) -> _.find(level.getSolutions(), language: 'coffeescript')}
 ]
 

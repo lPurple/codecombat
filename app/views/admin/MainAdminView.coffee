@@ -1,9 +1,11 @@
+require('app/styles/admin.sass')
 {backboneFailure, genericFailure} = require 'core/errors'
 errors = require 'core/errors'
 RootView = require 'views/core/RootView'
 template = require 'templates/admin'
 AdministerUserModal = require 'views/admin/AdministerUserModal'
 forms = require 'core/forms'
+utils = require 'core/utils'
 
 Campaigns = require 'collections/Campaigns'
 Classroom = require 'models/Classroom'
@@ -42,15 +44,35 @@ module.exports = class MainAdminView extends RootView
     @featureMode = window.serverSession.featureMode
     super()
 
-  onClickStopSpyingButton: ->
-    button = @$('#stop-spying-btn')
-    forms.disableSubmit(button)
+  afterInsert: ->
+    super()
+    if search = utils.getQueryVariable 'search'
+      $('#user-search').val search
+      $('#user-search-button').click()
+    if spy = utils.getQueryVariable 'spy'
+      if @amActually
+        @stopSpying()
+      else
+        $('#espionage-name-or-email').val spy
+        $('#enter-espionage-mode').click()
+    if userID = utils.getQueryVariable 'user'
+      @openModalView new AdministerUserModal({}, userID)
+
+  clearQueryParams: -> window.history.pushState({}, '', document.location.href.split('?')[0])
+
+  stopSpying: ->
     me.stopSpying({
       success: -> document.location.reload()
       error: ->
         forms.enableSubmit(button)
         errors.showNotyNetworkError(arguments...)
     })
+
+  onClickStopSpyingButton: ->
+    button = @$('#stop-spying-btn')
+    forms.disableSubmit(button)
+    @clearQueryParams()
+    @stopSpying()
 
   onClickClearFeatureModeButton: (e) ->
     e.preventDefault()
@@ -61,6 +83,7 @@ module.exports = class MainAdminView extends RootView
     button = @$('#enter-espionage-mode')
     userNameOrEmail = @$el.find('#espionage-name-or-email').val().toLowerCase()
     forms.disableSubmit(button)
+    @clearQueryParams()
     me.spy(userNameOrEmail, {
       success: -> window.location.reload()
       error: ->
@@ -113,16 +136,26 @@ module.exports = class MainAdminView extends RootView
     forms.enableSubmit(@$('#user-search-button'))
     result = ''
     if users.length
-      result = ("
-      <tr data-user-id='#{user._id}'>
-        <td><code>#{user._id}</code></td>
-        <td><img src='/db/user/#{user._id}/avatar?s=18' class='avatar'> #{_.escape(user.name or 'Anonymous')}</td>
-        <td>#{_.escape(user.email)}</td>
-        <td>
-          <button class='user-spy-button'>Spy</button>
-          #{if new User(user).isTeacher() then "<button class='teacher-dashboard-button'>View Classes</button>" else ""}
-        </td>
-      </tr>" for user in users)
+      result = []
+      for user in users
+        if user._trialRequest
+          trialRequestBit = "<br/>#{user._trialRequest.nces_name or user._trialRequest.organization} / #{user._trialRequest.nces_district || user._trialRequest.district}"
+        else
+          trialRequestBit = ""
+
+        result.push("
+        <tr data-user-id='#{user._id}'>
+          <td><code>#{user._id}</code></td>
+          <td>#{user.role or ''}</td>
+          <td><img src='/db/user/#{user._id}/avatar?s=18' class='avatar'> #{_.escape(user.name or 'Anonymous')}</td>
+          <td>#{_.escape(user.email)}#{trialRequestBit}</td>
+          <td>#{user.firstName or ''}</td>
+          <td>#{user.lastName or ''}</td>
+          <td>
+            <button class='user-spy-button'>Spy</button>
+            #{if new User(user).isTeacher() then "<button class='teacher-dashboard-button'>View Classes</button>" else ""}
+          </td>
+        </tr>")
       result = "<table class=\"table\">#{result.join('\n')}</table>"
     @$el.find('#user-search-result').html(result)
 

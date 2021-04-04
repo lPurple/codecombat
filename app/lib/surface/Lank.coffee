@@ -7,6 +7,7 @@ AudioPlayer = require 'lib/AudioPlayer'
 {me} = require 'core/auth'
 ThangType = require 'models/ThangType'
 utils = require 'core/utils'
+createjs = require 'lib/createjs-parts'
 
 # We'll get rid of this once level's teams actually have colors
 healthColors =
@@ -67,6 +68,7 @@ module.exports = Lank = class Lank extends CocoClass
     @options = _.extend($.extend(true, {}, @options), options)
     @gameUIState = @options.gameUIState
     @handleEvents = @options.handleEvents
+    @isCinematicLank = @options.isCinematic or false
     @setThang @options.thang
     @setColorConfig()
 
@@ -226,7 +228,7 @@ module.exports = Lank = class Lank extends CocoClass
         console.error "#{@thang.id} couldn't find layer #{layerName}Layer for AOE effect #{key}; using ground layer."
         layer = @options.groundLayer
 
-      unless key in layer.spriteSheet.getAnimations()
+      unless key in layer.spriteSheet.animations
         circle = new createjs.Shape()
         radius = args[2] * Camera.PPM
         if args.length is 4
@@ -351,7 +353,7 @@ module.exports = Lank = class Lank extends CocoClass
 
     newScaleFactorX = @thang?.scaleFactorX ? @thang?.scaleFactor ? 1
     newScaleFactorY = @thang?.scaleFactorY ? @thang?.scaleFactor ? 1
-    if @layer?.name is 'Land' or @thang?.spriteName is 'Beam'
+    if @layer?.name is 'Land' or @thang?.isLand or @thang?.spriteName is 'Beam' or @isCinematicLank
       @scaleFactorX = newScaleFactorX
       @scaleFactorY = newScaleFactorY
     else if @thang and (newScaleFactorX isnt @targetScaleFactorX or newScaleFactorY isnt @targetScaleFactorY)
@@ -518,7 +520,7 @@ module.exports = Lank = class Lank extends CocoClass
     team = @thang?.team or 'neutral'
     key = "#{team}-health-bar"
 
-    unless key in @options.floatingLayer.spriteSheet.getAnimations()
+    unless key in @options.floatingLayer.spriteSheet.animations
       healthColor = healthColors[team]
       bar = createProgressBar(healthColor)
       @options.floatingLayer.addCustomGraphic(key, bar, bar.bounds)
@@ -605,6 +607,7 @@ module.exports = Lank = class Lank extends CocoClass
   updateEffectMarks: ->
     return if _.isEqual @thang.effectNames, @previousEffectNames
     return if @stopped
+    @thang.effectNames ?= []
     for effect in @thang.effectNames
       mark = @addMark effect, @options.floatingLayer, effect
       mark.statusEffect = true
@@ -654,8 +657,8 @@ module.exports = Lank = class Lank extends CocoClass
       d.toggle debug
       d.updatePosition()
 
-  addLabel: (name, style) ->
-    @labels[name] ?= new Label sprite: @, camera: @options.camera, layer: @options.textLayer, style: style
+  addLabel: (name, style, labelOptions={}) ->
+    @labels[name] ?= new Label sprite: @, camera: @options.camera, layer: @options.textLayer, style: style, labelOptions: labelOptions
     @labels[name]
 
   addMark: (name, layer, thangType=null) ->
@@ -702,13 +705,14 @@ module.exports = Lank = class Lank extends CocoClass
 
   updateLabels: ->
     return unless @thang
-    blurb = if @thang.health <= 0 then null else @thang.sayMessage  # Dead men tell no tales
+    blurb = if @thang.health? and @thang.health <= 0 then null else @thang.sayMessage  # Dead men tell no tales, however non-alive can
     blurb = null if blurb in ['For Thoktar!', 'Bones!', 'Behead!', 'Destroy!', 'Die, humans!']  # Let's just hear, not see, these ones.
     if /Hero Placeholder/.test(@thang.id)
       labelStyle = Label.STYLE_DIALOGUE
     else
       labelStyle = @thang.labelStyle ? Label.STYLE_SAY
-    @addLabel 'say', labelStyle if blurb
+    if blurb
+      @addLabel 'say', labelStyle, @thang.sayLabelOptions
     if @labels.say?.setText blurb
       @notifySpeechUpdated blurb: blurb
 
@@ -758,11 +762,11 @@ module.exports = Lank = class Lank extends CocoClass
   playSound: (sound, withDelay=true, volume=1.0) ->
     if _.isString sound
       soundTriggers = utils.i18n @thangType.attributes, 'soundTriggers'
-      sound = soundTriggers?[sound]
+      sound = soundTriggers?[sound] or @thangType.get('soundTriggers')?[sound]  # Check localized triggers first, then root sound triggers in case of incomplete localization
     if _.isArray sound
       sound = sound[Math.floor Math.random() * sound.length]
     return null unless sound
-    delay = if withDelay and sound.delay then 1000 * sound.delay / createjs.Ticker.getFPS() else 0
+    delay = if withDelay and sound.delay then 1000 * sound.delay / createjs.Ticker.framerate else 0
     name = AudioPlayer.nameForSoundReference sound
     AudioPlayer.preloadSoundReference sound
     instance = AudioPlayer.playSound name, volume, delay, @getWorldPosition()

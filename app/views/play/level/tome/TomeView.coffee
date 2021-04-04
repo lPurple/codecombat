@@ -1,3 +1,4 @@
+require('app/styles/play/level/tome/tome.sass')
 # There's one TomeView per Level. It has:
 # - a CastButtonView, which has
 #   - a cast button
@@ -25,6 +26,7 @@ Spell = require './Spell'
 SpellPaletteView = require './SpellPaletteView'
 CastButtonView = require './CastButtonView'
 utils = require 'core/utils'
+store = require 'core/store'
 
 module.exports = class TomeView extends CocoView
   id: 'tome-view'
@@ -46,6 +48,10 @@ module.exports = class TomeView extends CocoView
 
   constructor: (options) ->
     super options
+    @unwatchFn = store.watch(
+      (state, getters) -> getters['game/levelSolution'],
+      (solution) => @onChangeMyCode(solution.source)
+    )
     unless options.god or options.level.get('type') is 'web-dev'
       console.error "TomeView created with no God!"
 
@@ -77,6 +83,11 @@ module.exports = class TomeView extends CocoView
       spell.view.updateACEText commentedSource
       spell.view.recompile false
     @cast()
+
+  onChangeMyCode: (solution) ->
+    for spellKey, spell of @spells when spell.canWrite()
+      spell.view.updateACEText solution
+      spell.view.recompile false
 
   createWorker: ->
     return null unless Worker?
@@ -110,7 +121,7 @@ module.exports = class TomeView extends CocoView
         pathComponents[0] = _.string.slugify pathComponents[0]
         spellKey = pathComponents.join '/'
         @thangSpells[thang.id].push spellKey
-        skipProtectAPI = @getQueryVariable 'skip_protect_api', false
+        skipProtectAPI = utils.getQueryVariable 'skip_protect_api', false
         spell = @spells[spellKey] = new Spell
           hintsState: @options.hintsState
           programmableMethod: method
@@ -144,18 +155,16 @@ module.exports = class TomeView extends CocoView
     null
 
   onSpellLoaded: (e) ->
-    console.log 'onSpellLoaded', e if me.get('name') is 'Shanakin'
     for spellID, spell of @spells
       return unless spell.loaded
-    console.log '... all loaded, let us begin' if me.get('name') is 'Shanakin'
     justBegin = @options.level.isType('game-dev')
     @cast false, false, justBegin
 
   onCastSpell: (e) ->
     # A single spell is cast.
-    @cast e?.preload, e?.realTime, e?.justBegin
+    @cast e?.preload, e?.realTime, e?.justBegin, e?.cinematic
 
-  cast: (preload=false, realTime=false, justBegin=false) ->
+  cast: (preload=false, realTime=false, justBegin=false, cinematic=false) ->
     return if @options.level.isType('web-dev')
     sessionState = @options.session.get('state') ? {}
     if realTime
@@ -171,7 +180,9 @@ module.exports = class TomeView extends CocoView
       @spells,
       preload,
       realTime,
+      synchronous: @options.level.isType('game-dev') and not justBegin,
       justBegin,
+      cinematic,
       difficulty,
       submissionCount: sessionState.submissionCount ? 0,
       flagHistory: sessionState.flagHistory ? [],
@@ -184,7 +195,7 @@ module.exports = class TomeView extends CocoView
     Backbone.Mediator.publish 'tome:focus-editor', {} unless $(e.target).parents('.popover').length
 
   onSpriteSelected: (e) ->
-    return if @spellView and @options.level.get('type', true) in ['hero', 'hero-ladder', 'hero-coop', 'course', 'course-ladder', 'game-dev', 'web-dev']  # Never deselect the hero in the Tome.
+    return if @spellView and @options.level.get('type', true) in ['hero', 'hero-ladder', 'hero-coop', 'course', 'course-ladder', 'game-dev', 'web-dev', 'ladder']  # Never deselect the hero in the Tome. TODO: remove entirely, as this is now all level types?
     spell = @spellFor e.thang, e.spellName
     if spell?.canRead()
       @setSpellView spell, e.thang
@@ -200,7 +211,7 @@ module.exports = class TomeView extends CocoView
     @spellView?.setThang thang
 
   updateSpellPalette: (thang, spell) ->
-    @options.playLevelView.updateSpellPalette thang, spell
+    @options.playLevelView?.updateSpellPalette thang, spell
 
   spellFor: (thang, spellName) ->
     return null unless thang?.isProgrammable
@@ -253,4 +264,5 @@ module.exports = class TomeView extends CocoView
   destroy: ->
     spell.destroy() for spellKey, spell of @spells
     @worker?.terminate()
+    @unwatchFn()
     super()

@@ -1,14 +1,15 @@
+require('app/styles/editor/verifier/i18n-verifier-view.sass')
 RootComponent = require 'views/core/RootComponent'
 Problem = require 'views/play/level/tome/Problem'
 locale = require 'locale/locale'
 api = require 'core/api'
-require 'vendor/co'
+co = require 'co'
 utils = require 'core/utils'
 
 I18nVerifierComponent = Vue.extend
   template: require('templates/editor/verifier/i18n-verifier-view')()
   data: ->
-    allLocales: Object.keys(_.omit(locale, 'update', 'installVueI18n')).concat('rot13')
+    allLocales: Object.keys(locale).concat('rot13')
     language: 'en'
     levelSlug: null
     startDay: moment(new Date()).subtract(2, 'weeks').format("YYYY-MM-DD")
@@ -48,16 +49,16 @@ I18nVerifierComponent = Vue.extend
   created: co.wrap ->
     @levelSlug = @$options.propsData.levelSlug
     @selectedLevelSlugs = [@levelSlug]
-    i18n.setLng(@language)
+    yield $.i18n.changeLanguage @language
     yield @loadCampaigns()
-    yield application.moduleLoader.loadLanguage(@language)
+    yield locale.load @language
     @setupRegexes()
     newProblems = yield @getProblems(@levelSlug)
     @compareStrings(newProblems)
     @loading = false
   watch:
     language: co.wrap ->
-      yield application.moduleLoader.loadLanguage(@language)
+      yield locale.load @language
       console.log "Finished loading language", @language
       @setupRegexes()
       @compareStrings(@problems)
@@ -82,9 +83,9 @@ I18nVerifierComponent = Vue.extend
       for campaign in @campaigns
         Vue.set(campaign, 'levelsArray', Object.values(campaign.levels))
     setupRegexes: ->
-      en = require('locale/en').translation
+      en = locale.en.translation
       # Call require like this to prevent preload.js from trying to load app/locale.js which doesn't exist
-      otherLang = window["require"]("locale/#{@language}").translation
+      otherLang = locale[@language].translation
       translationKeys = Object.keys(en.esper)
       @regexes = []
       for translationKey in translationKeys
@@ -118,15 +119,15 @@ I18nVerifierComponent = Vue.extend
       @totalCount = _.reduce(_.map(@problems, (p)->p.count), (a,b)->a+b)
       return newProblems
     compareStrings: (problems) ->
-      $.i18n.setLng(@language)
-      problems.forEach (problem) =>
-        original = problem[@messageOrHint]
-        translated = Problem.prototype.translate(problem[@messageOrHint])
-        trimmed = translated
-        for regex in @otherRegexes
-          trimmed = trimmed.replace(regex, '').replace(/^\n/, '')
-        Vue.set(problem, 'translated', translated)
-        Vue.set(problem, 'trimmed', trimmed)
+      $.i18n.changeLanguage @language, =>
+        problems.forEach (problem) =>
+          original = problem[@messageOrHint]
+          translated = Problem.prototype.translate(problem[@messageOrHint])
+          trimmed = translated
+          for regex in @otherRegexes
+            trimmed = trimmed.replace(regex, '').replace(/^\n/, '')
+          Vue.set(problem, 'translated', translated)
+          Vue.set(problem, 'trimmed', trimmed)
     slugifyProblem: (problem) ->
       str = _.string.slugify(problem.trimmed)
       str.split('-').slice(0,4).join('_')
@@ -140,4 +141,4 @@ module.exports = class I18nVerifierView extends RootComponent
     super options
   destroy: ->
     super(arguments...)
-    $.i18n.setLng(me.get('preferredLanguage'))
+    $.i18n.changeLanguage(me.get('preferredLanguage'))

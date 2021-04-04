@@ -1,5 +1,5 @@
-require 'aether'
-require 'esper'
+require './aether/aether.coffee'
+# require 'esper.js' # TODO Webpack: Get Esper out of the frontpage script
 
 utils = require 'core/utils'
 
@@ -61,3 +61,26 @@ functionParameters =
   update: []
   getNearestEnemy: []
   die: []
+
+# TODO Webpack: test to make sure this refactor works everywhere it's used
+module.exports.generateSpellsObject = (options) ->
+  {level, levelSession, token} = options
+  {createAetherOptions} = require 'lib/aether_utils'
+  aetherOptions = createAetherOptions functionName: 'plan', codeLanguage: levelSession.get('codeLanguage'), skipProtectAPI: options.level?.isType('game-dev')
+  spellThang = thang: {id: 'Hero Placeholder'}, aether: new Aether aetherOptions
+  spells = "hero-placeholder/plan": thang: spellThang, name: 'plan'
+  source = token or levelSession.get('code')?['hero-placeholder']?.plan ? ''
+  try
+    spellThang.aether.transpile source
+  catch e
+    console.log "Couldn't transpile!\n#{source}\n", e
+    spellThang.aether.transpile ''
+  spells
+
+module.exports.replaceSimpleLoops = (source, language) ->
+  switch language
+    when 'python' then source.replace /loop:/, 'while True:'
+    when 'javascript', 'java', 'cpp' then source.replace /loop {/, 'while (true) {'
+    when 'lua' then source.replace /loop\n/, 'while true then\n'
+    when 'coffeescript' then source
+    else source

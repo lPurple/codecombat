@@ -11,10 +11,7 @@ module.exports = class ProductModel extends CocoModel
   priceStringNoSymbol: -> (@get('amount') / 100).toFixed(2)
 
   adjustedPriceStringNoSymbol: ->
-    amt = @get('amount')
-    if @get('coupons')? and @get('coupons').length > 0
-      amt = @get('coupons')[0].amount
-    (amt / 100).toFixed(2)
+    (@adjustedPrice() / 100).toFixed(2)
 
   adjustedPrice: ->
     amt = @get('amount')
@@ -24,9 +21,9 @@ module.exports = class ProductModel extends CocoModel
 
   translateName: ->
     if /year_subscription/.test @get('name')
-      return i18n.translate('subscribe.year_subscription')
+      return i18n.t('subscribe.year_subscription')
     if /lifetime_subscription/.test @get('name')
-      return i18n.translate('subscribe.lifetime')
+      return i18n.t('subscribe.lifetime')
     @get('name')
 
   purchase: (token, options={}) ->

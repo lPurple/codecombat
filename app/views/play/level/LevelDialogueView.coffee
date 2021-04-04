@@ -1,6 +1,8 @@
+require('app/styles/play/level/level-dialogue-view.sass')
 CocoView = require 'views/core/CocoView'
 template = require 'templates/play/level/level-dialogue-view'
 DialogueAnimator = require './DialogueAnimator'
+PlayItemsModal = require 'views/play/modal/PlayItemsModal'
 
 module.exports = class LevelDialogueView extends CocoView
   id: 'level-dialogue-view'
@@ -12,6 +14,7 @@ module.exports = class LevelDialogueView extends CocoView
     'level:shift-space-pressed': 'onShiftSpacePressed'
     'level:escape-pressed': 'onEscapePressed'
     'sprite:dialogue-sound-completed': 'onDialogueSoundCompleted'
+    'level:open-items-modal': 'openItemsModal'
 
   events:
     'click': 'onClick'
@@ -28,10 +31,11 @@ module.exports = class LevelDialogueView extends CocoView
   onClickLink: (e) ->
     route = $(e.target).attr('href')
     if route and /item-store/.test route
-      PlayItemsModal = require 'views/play/modal/PlayItemsModal'
       @openModalView new PlayItemsModal supermodel: @supermodal
       e.stopPropagation()
 
+  openItemsModal: (e) ->
+    @openModalView new PlayItemsModal supermodel: @supermodal
 
   onSpriteDialogue: (e) ->
     return unless e.message
@@ -43,7 +47,6 @@ module.exports = class LevelDialogueView extends CocoView
         @$el.find('.dialogue-area').append($('<img/>').addClass('embiggen').attr('src', '/file/' + e.sprite.thangType.get('poseImage')))
       else
         @$el.find('.dialogue-area').append($('<img/>').attr('src', e.sprite.thangType.getPortraitURL()))
-    window.tracker?.trackEvent 'Heard Sprite', {message: e.message, label: e.message, ls: @sessionID}
 
   onDialogueSoundCompleted: ->
     @$el.removeClass 'speaking'
@@ -65,7 +68,7 @@ module.exports = class LevelDialogueView extends CocoView
     @$el.addClass(mood)
     @lastMood = mood
     @bubble.text('')
-    group = $('<div class="enter secret"></div>')
+    group = $('<div class="enter secret" dir="ltr"></div>')
     @bubble.append(group)
     if responses
       @lastResponses = responses

@@ -61,6 +61,8 @@ module.exports = class GoalManager extends CocoClass
   # world generator gets current goals from the main instance
   getGoals: -> @goals
 
+  getRemainingGoals: -> _.filter(@goalStates, (state) -> state.status != 'success')
+
   # background instance created by world generator,
   # gets these goals and code, and is told to be all ears during world gen
   setGoals: (@goals) ->
@@ -96,6 +98,16 @@ module.exports = class GoalManager extends CocoClass
       @goalStates[goalID] = goalState
     @notifyGoalChanges()
 
+
+  # Checks if the overall goal status is 'success', then progresses
+  # capstone goals to the next stage if there are more goals
+  finishLevel: ->
+    stageFinished = @checkOverallStatus() is 'success'
+    if @options.additionalGoals and stageFinished
+      @addAdditionalGoals(@options.session, @options.additionalGoals)
+
+    return stageFinished
+
   # IMPLEMENTATION DETAILS
 
   addGoal: (goal) ->
@@ -127,9 +139,14 @@ module.exports = class GoalManager extends CocoClass
     goals = (g for g in goals when not g.optional)
     goals = (g for g in goals when g.team in [undefined, @team]) if @team
     statuses = (goal.status for goal in goals)
-    overallStatus = 'success' if statuses.length > 0 and _.every(statuses, (s) -> s is 'success' or (ignoreIncomplete and s is null))
-    overallStatus = 'failure' if statuses.length > 0 and 'failure' in statuses
-    #console.log 'got overallStatus', overallStatus, 'from goals', goals, 'goalStates', @goalStates, 'statuses', statuses
+    isSuccess = (s) -> s is 'success' or (ignoreIncomplete and s is null)
+    if _.any(goals.map((g) => g.concepts?.length))
+      conceptStatuses = goals.filter((g) => g.concepts?.length).map((g) => g.status)
+      levelStatuses = goals.filter((g) => !g.concepts?.length).map((g) => g.status)
+      overallStatus = if _.all(levelStatuses, isSuccess) and _.any(conceptStatuses, isSuccess) then 'success' else 'failure'
+    else
+      overallStatus = 'success' if statuses.length > 0 and _.every(statuses, isSuccess)
+      overallStatus = 'failure' if statuses.length > 0 and 'failure' in statuses
     overallStatus
 
   # WORLD GOAL TRACKING
@@ -143,6 +160,8 @@ module.exports = class GoalManager extends CocoClass
         keyFrame: 0 # when it became a 'success' or 'failure'
         team: goal.team
         optional: goal.optional
+        hiddenGoal: goal.hiddenGoal
+        concepts: goal.concepts
       }
       @initGoalState(state, [goal.killThangs, goal.saveThangs], 'killed')
       for getTo in goal.getAllToLocations ? []
@@ -262,6 +281,10 @@ module.exports = class GoalManager extends CocoClass
 
   setGoalState: (goalID, status) ->
     state = @goalStates[goalID]
+    if not state
+      console.log('Could not set state for goalID ', goalID)
+      return
+
     state.status = status
     if overallStatus = @checkOverallStatus true
       matchedGoals = (_.find(@goals, {id: goalID}) for goalID, goalState of @goalStates when goalState.status is overallStatus)

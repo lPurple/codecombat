@@ -1,3 +1,4 @@
+require('app/styles/play/level/modal/game-dev-victory-modal.sass')
 ModalView = require 'views/core/ModalView'
 
 category = 'Play GameDev Level'
@@ -11,7 +12,10 @@ module.exports = class GameDevVictoryModal extends ModalView
     'click #copy-url-btn': 'onClickCopyURLButton'
     'click #play-more-codecombat-btn': 'onClickPlayMoreCodeCombatButton'
   
-  initialize: ({@shareURL, @eventProperties}) ->
+  initialize: ({@shareURL, @eventProperties, @victoryMessage}) ->
+
+  getVictoryMessage: ->
+    @victoryMessage ? "You beat the game!"
 
   onClickReplayButton: ->
     @trigger 'replay'

@@ -1,6 +1,6 @@
+require('app/styles/clans/clan-details.sass')
 RootView = require 'views/core/RootView'
 template = require 'templates/clans/clan-details'
-app = require 'core/application'
 CreateAccountModal = require 'views/core/CreateAccountModal'
 CocoCollection = require 'collections/CocoCollection'
 Campaign = require 'models/Campaign'
@@ -20,6 +20,12 @@ utils = require 'core/utils'
 module.exports = class ClanDetailsView extends RootView
   id: 'clan-details-view'
   template: template
+
+  getMeta: ->
+    title: $.i18n.t 'clans.title'
+    meta: [
+      { vmid: 'meta-description', name: 'description', content: $.i18n.t 'clans.meta_description' }
+    ]
 
   events:
     'change .expand-progress-checkbox': 'onExpandedProgressCheckbox'
@@ -195,13 +201,17 @@ module.exports = class ClanDetailsView extends RootView
         if level.concepts?
           for concept in level.concepts
             @conceptsProgression.push concept unless concept in @conceptsProgression
-        if level.type is 'hero-ladder' and level.slug not in ['capture-their-flag']  # Would use isType, but it's not a Level model
+        if level.type in ['hero-ladder', 'ladder'] and level.slug not in ['capture-their-flag']  # Would use isType, but it's not a Level model
           @arenas.push level
       @campaignLevelProgressions.push campaignLevelProgression
     @render?()
 
   onClanSync: ->
-    unless @owner?
+    @setMeta({
+      title: $.i18n.t('clans.clan_title', { clan: @clan.get('name') })
+    })
+
+    if @clan.get('ownerID') and not @owner?
       @owner = new User _id: @clan.get('ownerID')
       @listenTo @owner, 'sync', => @render?()
       @supermodel.loadModel @owner, cache: false
@@ -289,7 +299,7 @@ module.exports = class ClanDetailsView extends RootView
       error: (model, response, options) =>
         console.error 'Error joining clan', response
       success: (model, response, options) =>
-        app.router.navigate "/clans"
+        application.router.navigate "/clans"
         window.location.reload()
     @supermodel.addRequestResource( 'delete_clan', options).load()
 

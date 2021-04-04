@@ -1,17 +1,18 @@
+require('app/styles/editor/level/component/level-component-edit-view.sass')
 CocoView = require 'views/core/CocoView'
 template = require 'templates/editor/level/component/level-component-edit-view'
 LevelComponent = require 'models/LevelComponent'
 ComponentVersionsModal = require 'views/editor/component/ComponentVersionsModal'
 PatchesView = require 'views/editor/PatchesView'
 SaveVersionModal = require 'views/editor/modal/SaveVersionModal'
-ace = require 'ace'
+ace = require('lib/aceContainer')
 
-require 'vendor/treema'
+require 'lib/setupTreema'
 
 module.exports = class LevelComponentEditView extends CocoView
   id: 'level-component-edit-view'
   template: template
-  editableSettings: ['name', 'description', 'system', 'codeLanguage', 'dependencies', 'propertyDocumentation', 'i18n']
+  editableSettings: ['name', 'description', 'system', 'codeLanguage', 'dependencies', 'propertyDocumentation', 'i18n', 'context']
 
   events:
     'click #done-editing-component-button': 'endEditing'
@@ -23,7 +24,7 @@ module.exports = class LevelComponentEditView extends CocoView
     'click #component-history-button': 'showVersionHistory'
     'click #patch-component-button': 'startPatchingComponent'
     'click #component-watch-button': 'toggleWatchComponent'
-    'click #pop-component-i18n-button': 'onPopulateI18N' 
+    'click #pop-component-i18n-button': 'onPopulateI18N'
 
   constructor: (options) ->
     super options
@@ -105,8 +106,12 @@ module.exports = class LevelComponentEditView extends CocoView
     @editor = ace.edit(editorEl[0])
     @editor.setReadOnly(me.get('anonymous'))
     session = @editor.getSession()
-    session.setMode 'ace/mode/coffee'
-    session.setTabSize 2
+    if @levelComponent.get('codeLanguage') is 'javascript'
+      session.setMode 'ace/mode/javascript'
+      session.setTabSize 4
+    else
+      session.setMode 'ace/mode/coffee'
+      session.setTabSize 2
     session.setNewLineMode = 'unix'
     session.setUseSoftTabs true
     @editor.on('change', @onEditorChange)

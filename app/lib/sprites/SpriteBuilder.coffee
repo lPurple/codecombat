@@ -1,4 +1,5 @@
 {hexToHSL, hslToHex} = require 'core/utils'
+createjs = require 'lib/createjs-parts'
 
 module.exports = class SpriteBuilder
   constructor: (@thangType, @options) ->
@@ -85,6 +86,7 @@ module.exports = class SpriteBuilder
     for localAnimation in localAnimations
       animation = @buildMovieClip(localAnimation.gn, localAnimation.a...)
       animation.setTransform(localAnimation.t...)
+      animation._off = true if localAnimation.off
       map[localAnimation.bn] = animation
     map
 

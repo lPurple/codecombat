@@ -1,5 +1,3 @@
-require 'newrelic' if process.env.NEW_RELIC_LICENSE_KEY?
-
 do (setupLodash = this) ->
   GLOBAL._ = require 'lodash'
   _.str = require 'underscore.string'
@@ -9,6 +7,9 @@ express = require 'express'
 http = require 'http'
 log = require 'winston'
 serverSetup = require './server_setup'
+co = require 'co'
+config = require './server_config'
+Promise = require 'bluebird'
 
 module.exports.startServer = (done) ->
   app = createAndConfigureApp()
@@ -17,11 +18,11 @@ module.exports.startServer = (done) ->
   {app, httpServer}
 
 createAndConfigureApp = module.exports.createAndConfigureApp = ->
-  serverSetup.setupLogging()
-  serverSetup.connectToDatabase()
-  
+
   app = express()
+  if config.forceCompression
+    compression = require('compression')
+    app.use(compression())
   serverSetup.setExpressConfigurationOptions app
   serverSetup.setupMiddleware app
-  serverSetup.setupRoutes app
   app

@@ -1,8 +1,10 @@
+require('app/styles/play/level/control-bar-view.sass')
 storage = require 'core/storage'
 
 CocoView = require 'views/core/CocoView'
 template = require 'templates/play/level/control-bar-view'
 {me} = require 'core/auth'
+utils = require 'core/utils'
 
 Campaign = require 'models/Campaign'
 Classroom = require 'models/Classroom'
@@ -10,6 +12,7 @@ Course = require 'models/Course'
 CourseInstance = require 'models/CourseInstance'
 GameMenuModal = require 'views/play/menu/GameMenuModal'
 LevelSetupManager = require 'lib/LevelSetupManager'
+CreateAccountModal = require 'views/core/CreateAccountModal'
 
 module.exports = class ControlBarView extends CocoView
   id: 'control-bar-view'
@@ -29,6 +32,7 @@ module.exports = class ControlBarView extends CocoView
     'click #control-bar-sign-up-button': 'onClickSignupButton'
     'click #version-switch-button': 'onClickVersionSwitchButton'
     'click #version-switch-button .code-language-selector': 'onClickVersionSwitchButton'
+    'click [data-toggle="coco-modal"][data-target="core/CreateAccountModal"]': 'openCreateAccountModal'
 
   constructor: (options) ->
     @supermodel = options.supermodel
@@ -68,19 +72,29 @@ module.exports = class ControlBarView extends CocoView
     if @level.get 'replayable'
       @listenTo @session, 'change-difficulty', @onSessionDifficultyChanged
 
+  setLevelName: (overideLevelName) ->
+    @levelName = overideLevelName
+    @render()
+
   onLoaded: ->
     if @classroom
       @levelNumber = @classroom.getLevelNumber(@level.get('original'), @levelNumber)
     else if @campaign
       @levelNumber = @campaign.getLevelNumber(@level.get('original'), @levelNumber)
+    if application.getHocCampaign() or @level.get('assessment')
+      @levelNumber = null
     super()
+
+  openCreateAccountModal: (e) ->
+    e.stopPropagation()
+    @openModalView new CreateAccountModal()
 
   setBus: (@bus) ->
 
   getRenderData: (c={}) ->
     super c
     c.worldName = @worldName
-    c.ladderGame = @level.isType('ladder', 'hero-ladder', 'course-ladder')
+    c.ladderGame = @level.isLadder()
     if @level.get 'replayable'
       c.levelDifficulty = @session.get('state')?.difficulty ? 0
       if @observing
@@ -90,24 +104,26 @@ module.exports = class ControlBarView extends CocoView
     c.spectateGame = @spectateGame
     c.observing = @observing
     @homeViewArgs = [{supermodel: if @hasReceivedMemoryWarning then null else @supermodel}]
-    gameDevHoc = storage.load('should-return-to-game-dev-hoc')
-    if gameDevHoc
-      @homeLink = "/play/game-dev-hoc"
+    gameDevCampaign = application.getHocCampaign()
+    if gameDevCampaign
+      @homeLink = "/play/#{gameDevCampaign}"
       @homeViewClass = 'views/play/CampaignView'
-      @homeViewArgs.push 'game-dev-hoc'
+      @homeViewArgs.push gameDevCampaign
     else if me.isSessionless()
       @homeLink = "/teachers/courses"
       @homeViewClass = "views/courses/TeacherCoursesView"
-    else if @level.isType('ladder', 'ladder-tutorial', 'hero-ladder', 'course-ladder')
+    else if @level.isLadder()
       levelID = @level.get('slug')?.replace(/\-tutorial$/, '') or @level.id
       @homeLink = "/play/ladder/#{levelID}"
       @homeViewClass = 'views/ladder/LadderView'
       @homeViewArgs.push levelID
-      if leagueID = @getQueryVariable('league') or @getQueryVariable('course-instance')
+      if leagueID = utils.getQueryVariable('league') or utils.getQueryVariable('course-instance')
         leagueType = if @level.isType('course-ladder') then 'course' else 'clan'
         @homeViewArgs.push leagueType
         @homeViewArgs.push leagueID
         @homeLink += "/#{leagueType}/#{leagueID}"
+        if tournamentId = utils.getQueryVariable('tournament')
+          @homeLink += "?tournament=#{tournamentId}"
     else if @level.isType('course') or @courseID
       @homeLink = "/play"
       if @course?
@@ -115,7 +131,7 @@ module.exports = class ControlBarView extends CocoView
         @homeViewArgs.push @course.get('campaignID')
       if @courseInstanceID
         @homeLink += "?course-instance=#{@courseInstanceID}"
-        
+
       @homeViewClass = 'views/play/CampaignView'
     else if @level.isType('hero', 'hero-coop', 'game-dev', 'web-dev') or window.serverConfig.picoCTF
       @homeLink = '/play'

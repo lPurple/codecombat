@@ -17,7 +17,12 @@ me.object = (ext, props) -> combine({type: 'object', additionalProperties: false
 me.array = (ext, items) -> combine({type: 'array', items: items or {}}, ext)
 me.shortString = (ext) -> combine({type: 'string', maxLength: 100}, ext)
 me.pct = (ext) -> combine({type: 'number', maximum: 1.0, minimum: 0.0}, ext)
-me.passwordString = {type: 'string', maxLength: 256, minLength: 2, title: 'Password'}
+me.passwordString = {
+  allOf: [
+    {type: 'string', maxLength: 64, minLength: 8, title: 'Password'},
+    { not: { pattern: '([\\s\\S])\\1\\1' } }
+  ]
+}
 
 # Dates should usually be strings, ObjectIds should be strings: https://github.com/codecombat/codecombat/issues/1384
 me.date = (ext) -> combine({type: ['object', 'string'], format: 'date-time'}, ext)  # old
@@ -124,6 +129,13 @@ searchableProps = ->
 me.extendSearchableProperties = (schema) ->
   schema.properties = {} unless schema.properties?
   _.extend(schema.properties, searchableProps())
+
+algoliaSearchableProps = ->
+  _algoliaObjectID: { type: 'string' }
+
+me.extendAlgoliaProperties = (schema) ->
+  schema.properties = {} unless schema.properties?
+  _.extend(schema.properties, algoliaSearchableProps())
 
 # PERMISSIONED
 
@@ -243,3 +255,5 @@ me.task = me.object {title: 'Task', description: 'A task to be completed', forma
   complete: {title: 'Complete', description: 'Whether this task is done.', type: 'boolean', format: 'checkbox'}
 
 me.concept = {type: 'string', enum: (concept.concept for concept in concepts), format: 'concept'}
+
+me.scoreType = me.shortString(title: 'Score Type', 'enum': ['time', 'damage-taken', 'damage-dealt', 'gold-collected', 'difficulty', 'code-length', 'survival-time', 'defeated'])  # TODO: total gear value.

@@ -1,5 +1,8 @@
+factories = require 'test/app/factories'
+
 describe('GoalManager', ->
   GoalManager = require 'lib/world/GoalManager'
+
   killGoal = {name: 'Kill Guy', killThangs: ['Guy1', 'Guy2'], id: 'killguy'}
   saveGoal = {name: 'Save Guy', saveThangs: ['Guy1', 'Guy2'], id: 'saveguy'}
   getToLocGoal = {name: 'Go there', getToLocation: {target: 'Frying Pan', who: 'Potato'}, id: 'id'}

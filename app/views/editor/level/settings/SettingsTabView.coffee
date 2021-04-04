@@ -1,3 +1,4 @@
+require('app/styles/editor/level/settings_tab.sass')
 CocoView = require 'views/core/CocoView'
 template = require 'templates/editor/level/settings_tab'
 Level = require 'models/Level'
@@ -5,7 +6,7 @@ ThangType = require 'models/ThangType'
 Surface = require 'lib/surface/Surface'
 nodes = require './../treema_nodes'
 {me} = require 'core/auth'
-require 'vendor/treema'
+require 'lib/setupTreema'
 concepts = require 'schemas/concepts'
 
 module.exports = class SettingsTabView extends CocoView
@@ -15,11 +16,12 @@ module.exports = class SettingsTabView extends CocoView
 
   # not thangs or scripts or the backend stuff
   editableSettings: [
-    'name', 'description', 'documentation', 'nextLevel', 'victory', 'i18n', 'goals',
+    'name', 'description', 'documentation', 'nextLevel', 'victory', 'i18n', 'goals', 'clans',
     'type', 'kind', 'terrain', 'banner', 'loadingTip', 'requiresSubscription', 'adventurer', 'adminOnly',
-    'helpVideos', 'replayable', 'scoreTypes', 'concepts', 'primaryConcepts', 'picoCTFProblem', 'practice', 'practiceThresholdMinutes'
-    'primerLanguage', 'shareable', 'studentPlayInstructions', 'requiredCode', 'suspectCode',
-    'requiredGear', 'restrictedGear', 'requiredProperties', 'restrictedProperties', 'recommendedHealth', 'allowedHeroes'
+    'helpVideos', 'replayable', 'scoreTypes', 'concepts', 'primaryConcepts', 'picoCTFProblem', 'practice', 'assessment',
+    'practiceThresholdMinutes', 'primerLanguage', 'shareable', 'studentPlayInstructions', 'requiredCode', 'suspectCode',
+    'requiredGear', 'restrictedGear', 'requiredProperties', 'restrictedProperties', 'recommendedHealth', 'allowedHeroes',
+    'maximumHealth', 'assessmentPlacement', 'password', 'mirrorMatch', 'autocompleteReplacement'
   ]
 
   subscriptions:
@@ -54,12 +56,14 @@ module.exports = class SettingsTabView extends CocoView
         'solution-stats': SolutionStatsNode
         concept: ConceptNode
         'concepts-list': ConceptsListNode
+        'clans-list': ClansListNode
       solutions: @level.getSolutions()
 
     @settingsTreema = @$el.find('#settings-treema').treema treemaOptions
     @settingsTreema.build()
     @settingsTreema.open()
     @lastTerrain = data.terrain
+    @lastType = data.type
 
   getThangIDs: ->
     (t.id for t in @level.get('thangs') ? [])
@@ -71,6 +75,8 @@ module.exports = class SettingsTabView extends CocoView
     if (terrain = @settingsTreema.data.terrain) isnt @lastTerrain
       @lastTerrain = terrain
       Backbone.Mediator.publish 'editor:terrain-changed', terrain: terrain
+    if (type = @settingsTreema.data.type) isnt @lastType
+      @onTypeChanged type
     for goal, index in @settingsTreema.data.goals ? []
       continue if goal.id
       goalIndex = index
@@ -88,6 +94,17 @@ module.exports = class SettingsTabView extends CocoView
 
   onRandomTerrainGenerated: (e) ->
     @settingsTreema.set '/terrain', e.terrain
+
+  onTypeChanged: (type) ->
+    @lastType = type
+    if type is 'ladder' and @settingsTreema.get('/mirrorMatch') isnt false
+      @settingsTreema.set '/mirrorMatch', false
+      noty {
+        text: "Type updated to 'ladder', so mirrorMatch has been updated to false."
+        layout: 'topCenter'
+        timeout: 5000
+        type: 'information'
+      }
 
   destroy: ->
     @settingsTreema?.destroy()
@@ -148,14 +165,14 @@ class ConceptNode extends TreemaNode.nodeMap.string
     @$el.append($("<span class='treema-description'>#{description}</span>").show())
 
   limitChoices: (options) ->
-    if @parent.keyForParent is 'concepts'
+    if @parent.keyForParent is 'concepts' and (not this.parent.parent)
       options = (o for o in options when _.find(concepts, (c) -> c.concept is o and not c.automatic and not c.deprecated))  # Allow manual, not automatic
     else
       options = (o for o in options when _.find(concepts, (c) -> c.concept is o and not c.deprecated))  # Allow both
     super options
 
   onClick: (e) ->
-    return if @$el.hasClass('concept-automatic')  # Don't allow editing of automatic concepts
+    return if this.parent.keyForParent is 'concepts' and (not this.parent.parent) and @$el.hasClass('concept-automatic')  # Don't allow editing of automatic concepts
     super e
 
 class ConceptsListNode extends TreemaNode.nodeMap.array
@@ -168,3 +185,6 @@ class ConceptsListNode extends TreemaNode.nodeMap.array
     return -1 if aAutomatic and not bAutomatic  # Auto before manual
     return 0 if not aAutomatic and not bAutomatic  # No ordering within manual
     super a, b  # Alpha within auto
+
+class ClansListNode extends TreemaNode.nodeMap.array
+  nodeDescription: 'ClansList'

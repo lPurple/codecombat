@@ -1,6 +1,9 @@
+require('app/styles/play/modal/play-heroes-modal.sass')
 ModalView = require 'views/core/ModalView'
 template = require 'templates/play/modal/play-heroes-modal'
 buyGemsPromptTemplate = require 'templates/play/modal/buy-gems-prompt'
+earnGemsPromptTemplate = require 'templates/play/modal/earn-gems-prompt'
+subscribeForGemsPrompt = require 'templates/play/modal/subscribe-for-gems-prompt'
 CocoCollection = require 'collections/CocoCollection'
 ThangType = require 'models/ThangType'
 SpriteBuilder = require 'lib/sprites/SpriteBuilder'
@@ -13,6 +16,7 @@ Purchase = require 'models/Purchase'
 LayerAdapter = require 'lib/surface/LayerAdapter'
 Lank = require 'lib/surface/Lank'
 store = require 'core/store'
+createjs = require 'lib/createjs-parts'
 
 module.exports = class PlayHeroesModal extends ModalView
   className: 'modal fade play-modal'
@@ -27,6 +31,7 @@ module.exports = class PlayHeroesModal extends ModalView
     'click .unlock-button': 'onUnlockButtonClicked'
     'click .subscribe-button': 'onSubscribeButtonClicked'
     'click .buy-gems-prompt-button': 'onBuyGemsPromptButtonClicked'
+    'click .start-subscription-button': 'onSubscribeButtonClicked'
     'click': 'onClickedSomewhere'
 
   shortcuts:
@@ -40,7 +45,7 @@ module.exports = class PlayHeroesModal extends ModalView
     @confirmButtonI18N = options.confirmButtonI18N ? "common.save"
     @heroes = new CocoCollection([], {model: ThangType})
     @heroes.url = '/db/thang.type?view=heroes'
-    @heroes.setProjection ['original','name','slug','soundTriggers','featureImages','gems','heroClass','description','components','extendedName','unlockLevelName','i18n','poseImage','tier','releasePhase']
+    @heroes.setProjection ['original','name','slug','soundTriggers','featureImages','gems','heroClass','description','components','extendedName','shortName','unlockLevelName','i18n','poseImage','tier','releasePhase','ozaria']
     @heroes.comparator = 'gems'
     @listenToOnce @heroes, 'sync', @onHeroesLoaded
     @supermodel.loadCollection(@heroes, 'heroes')
@@ -52,14 +57,16 @@ module.exports = class PlayHeroesModal extends ModalView
     @trackTimeVisible()
 
   onHeroesLoaded: ->
+    @heroes.reset(@heroes.filter((hero) => not hero.get('ozaria')))
     @formatHero hero for hero in @heroes.models
-    if me.freeOnly()
+    if me.freeOnly() or application.getHocCampaign()
       @heroes.reset(@heroes.filter((hero) => !hero.locked))
     unless me.isAdmin()
       @heroes.reset(@heroes.filter((hero) => hero.get('releasePhase') isnt 'beta'))
 
   formatHero: (hero) ->
     hero.name = utils.i18n hero.attributes, 'extendedName'
+    hero.name ?= utils.i18n hero.attributes, 'shortName'
     hero.name ?= utils.i18n hero.attributes, 'name'
     hero.description = utils.i18n hero.attributes, 'description'
     hero.unlockLevelName = utils.i18n hero.attributes, 'unlockLevelName'
@@ -68,7 +75,7 @@ module.exports = class PlayHeroesModal extends ModalView
     hero.unlockBySubscribing = hero.attributes.slug in ['samurai', 'ninja', 'librarian']
     hero.premium = not hero.free and not hero.unlockBySubscribing
     hero.locked = not me.ownsHero(original) and not (hero.unlockBySubscribing and me.isPremium())
-    hero.purchasable = hero.locked and me.isPremium()
+    hero.purchasable = hero.locked and (me.isPremium() or me.allowStudentHeroPurchase())
     if @options.level and allowedHeroes = @options.level.get 'allowedHeroes'
       hero.restricted = not (hero.get('original') in allowedHeroes)
     hero.class = (hero.get('heroClass') or 'warrior').toLowerCase()
@@ -135,15 +142,19 @@ module.exports = class PlayHeroesModal extends ModalView
         {id: 'javascript', name: 'JavaScript'}
       ]
     else
+      @subscriberCodeLanguageList = [
+        {id: 'cpp', name: "C++ (#{$.i18n.t('choose_hero.experimental')})"}
+      ]
       @codeLanguageList = [
         {id: 'python', name: "Python (#{$.i18n.t('choose_hero.default')})"}
         {id: 'javascript', name: 'JavaScript'}
         {id: 'coffeescript', name: "CoffeeScript (#{$.i18n.t('choose_hero.experimental')})"}
-        {id: 'lua', name: 'Lua'}
+        @subscriberCodeLanguageList...
       ]
 
       if me.isAdmin() or not application.isProduction()
         @codeLanguageList.push {id: 'java', name: "Java (#{$.i18n.t('choose_hero.experimental')})"}
+        @codeLanguageList.push {id: 'lua', name: "Lua (#{$.i18n.t('choose_hero.experimental')})"}
 
   onHeroChanged: (e) ->
     direction = e.direction  # 'left' or 'right'
@@ -151,7 +162,7 @@ module.exports = class PlayHeroesModal extends ModalView
     hero = _.find @heroes.models, (hero) -> hero.get('original') is heroItem.data('hero-id')
     return console.error "Couldn't find hero from heroItem:", heroItem unless hero
     heroIndex = heroItem.index()
-    hero = @loadHero hero, heroIndex
+    hero = @loadHero hero
     @preloadHero heroIndex + 1
     @preloadHero heroIndex - 1
     @selectedHero = hero unless hero.locked
@@ -171,67 +182,16 @@ module.exports = class PlayHeroesModal extends ModalView
 
   preloadHero: (heroIndex) ->
     return unless hero = @heroes.models[heroIndex]
-    @loadHero hero, heroIndex, true
+    @loadHero hero, true
 
-  loadHero: (hero, heroIndex, preloading=false) ->
-    createjs.Ticker.removeEventListener 'tick', stage for stage in _.values @stages
-    createjs.Ticker.setFPS 30  # In case we paused it from being inactive somewhere else
+  loadHero: (hero, preloading=false) ->
     if poseImage = hero.get 'poseImage'
       $(".hero-item[data-hero-id='#{hero.get('original')}'] canvas").hide()
       $(".hero-item[data-hero-id='#{hero.get('original')}'] .hero-pose-image").show().find('img').prop('src', '/file/' + poseImage)
       @playSelectionSound hero unless preloading
       return hero
-    if stage = @stages[heroIndex]
-      unless preloading
-        _.defer -> createjs.Ticker.addEventListener 'tick', stage  # Deferred, otherwise it won't start updating for some reason.
-        @playSelectionSound hero
-      return hero
-    fullHero = @getFullHero hero.get 'original'
-    onLoaded = =>
-      canvas = $(".hero-item[data-hero-id='#{fullHero.get('original')}'] canvas")
-      return unless canvas.length  # Don't render it if it's not on the screen.
-      unless fullHero.get 'raw'
-        console.error "Couldn't make animation for #{fullHero.get('name')} with attributes #{_.cloneDeep(fullHero.attributes)}. Was it loaded with an improper projection or something?", fullHero
-        @rerenderFooter()
-        return
-      canvas.show().prop width: @canvasWidth, height: @canvasHeight
-
-      layer = new LayerAdapter({webGL:true})
-      @layers.push layer
-      layer.resolutionFactor = 8 # hi res!
-      layer.buildAsync = false
-      multiplier = 7
-      layer.scaleX = layer.scaleY = multiplier
-      lank = new Lank(fullHero, {preloadSounds: false})
-
-      layer.addLank(lank)
-      layer.on 'new-spritesheet', ->
-        #- maybe put some more normalization here?
-        m = multiplier
-        m *= 0.75 if fullHero.get('slug') in ['knight', 'samurai', 'librarian', 'sorcerer', 'necromancer']  # These heroes are larger for some reason. Shrink 'em.
-        m *= 0.4 if fullHero.get('slug') is 'goliath'  # Just too big!
-        m *= 0.9 if fullHero.get('slug') is 'champion'  # Gotta fit her hair in there
-        layer.container.scaleX = layer.container.scaleY = m
-        layer.container.children[0].x = 160/m
-        layer.container.children[0].y = 250/m
-        if fullHero.get('slug') in ['forest-archer', 'librarian', 'sorcerer', 'potion-master', 'necromancer', 'code-ninja']
-          layer.container.children[0].y -= 3
-        if fullHero.get('slug') in ['librarian', 'sorcerer', 'potion-master', 'necromancer', 'goliath']
-          layer.container.children[0].x -= 3
-
-      stage = new createjs.SpriteStage(canvas[0])
-      @stages[heroIndex] = stage
-      stage.addChild layer.container
-      stage.update()
-      unless preloading
-        createjs.Ticker.addEventListener 'tick', stage
-        @playSelectionSound hero
-      @rerenderFooter()
-    if fullHero.loaded
-      _.defer onLoaded
     else
-      @listenToOnce fullHero, 'sync', onLoaded
-    fullHero
+      throw new Error("Don't have poseImage for #{hero.get('original')}")
 
   animateHeroes: =>
     return unless @visibleHero
@@ -272,7 +232,7 @@ module.exports = class PlayHeroesModal extends ModalView
     affordable = @visibleHero.get('gems') <= me.gems()
     if not affordable
       @playSound 'menu-button-click'
-      @askToBuyGems button unless me.freeOnly()
+      @askToBuyGemsOrSubscribe button unless me.freeOnly()
     else if button.hasClass('confirm')
       @playSound 'menu-button-unlock-end'
       purchase = Purchase.makeFor(@visibleHero)
@@ -288,6 +248,7 @@ module.exports = class PlayHeroesModal extends ModalView
       #- ...then rerender visible hero
       heroEntry = @$el.find(".hero-item[data-hero-id='#{@visibleHero.get('original')}']")
       heroEntry.find('.hero-status-value').attr('data-i18n', 'play.available').i18n()
+      @applyRTLIfNeeded()
       heroEntry.removeClass 'locked purchasable'
       @selectedHero = @visibleHero
       @rerenderFooter()
@@ -303,9 +264,18 @@ module.exports = class PlayHeroesModal extends ModalView
     createAccountModal = new CreateAccountModal supermodel: @supermodel
     return @openModalView createAccountModal
 
-  askToBuyGems: (unlockButton) ->
+  askToBuyGemsOrSubscribe: (unlockButton) ->
     @$el.find('.unlock-button').popover 'destroy'
-    popoverTemplate = buyGemsPromptTemplate {}
+    if me.isStudent()
+      popoverTemplate = earnGemsPromptTemplate {}
+    else if me.canBuyGems()
+      popoverTemplate = buyGemsPromptTemplate {}
+    else
+      if not me.hasSubscription() # user does not have subscription ask him to subscribe to get more gems, china infra does not have 'buy gems' option
+        popoverTemplate = subscribeForGemsPrompt {}
+      else # user has subscription and yet not enough gems, just ask him to keep playing for more gems
+        popoverTemplate = earnGemsPromptTemplate {}
+
     unlockButton.popover(
       animation: true
       trigger: 'manual'
@@ -315,7 +285,8 @@ module.exports = class PlayHeroesModal extends ModalView
       template: popoverTemplate
     ).popover 'show'
     popover = unlockButton.data('bs.popover')
-    popover?.$tip?.i18n()
+    popover?.$tip?.i18n()  # Doesn't work
+    @applyRTLIfNeeded()
 
   onBuyGemsPromptButtonClicked: (e) ->
     return @askToSignUp() if me.get('anonymous')
@@ -326,14 +297,17 @@ module.exports = class PlayHeroesModal extends ModalView
     @$el.find('.unlock-button').popover 'destroy'
 
   onSubscribeButtonClicked: (e) ->
-    return @askToSignUp() if me.get('anonymous')
     @openModalView new SubscribeModal()
-    console.log $(e.target).data('heroSlug')
     window.tracker?.trackEvent 'Show subscription modal', category: 'Subscription', label: 'hero subscribe modal: ' + ($(e.target).data('heroSlug') or 'unknown')
 
   #- Exiting
 
   saveAndHide: ->
+    if !me.hasSubscription() and @subscriberCodeLanguageList.find((l) => l.id == @codeLanguage)
+      @openModalView new SubscribeModal()
+      window.tracker?.trackEvent 'Show subscription modal', category: 'Subscription', label: 'hero subscribe modal: experimental language'
+      return
+
     hero = @selectedHero?.get('original')
     hero ?= @visibleHero?.get('original') if @visibleHero?.loaded and not @visibleHero.locked
     unless hero

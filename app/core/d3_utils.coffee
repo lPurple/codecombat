@@ -1,4 +1,4 @@
-# Caller needs require 'vendor/d3'
+# Caller needs require 'd3/d3.js'
 
 module.exports.createContiguousDays = (timeframeDays, skipToday=true, dayOffset=0) ->
   # Return list of last 'timeframeDays' contiguous days in yyyy-mm-dd format
@@ -100,6 +100,7 @@ module.exports.createLineChart = (containerSelector, chartLines, containerWidth)
       .attr("x2", currentKeyXOffset + 40)
       .attr("y2", currentKeyYOffset + keyHeight / 2)
       .attr("stroke", line.lineColor)
+      .attr("stroke-width", 4)
       .attr("class", "key-line")
     what = svg.append("text")
       .attr("x", currentKeyXOffset + 40 + 10)

@@ -1,3 +1,4 @@
+require('app/styles/editor/level/thangs-tab-view.sass')
 CocoView = require 'views/core/CocoView'
 AddThangsView = require './AddThangsView'
 thangs_template = require 'templates/editor/level/thangs-tab-view'
@@ -10,12 +11,17 @@ Surface = require 'lib/surface/Surface'
 Thang = require 'lib/world/thang'
 LevelThangEditView = require './LevelThangEditView'
 LevelComponents = require 'collections/LevelComponents'
-require 'vendor/treema'
+require 'lib/setupTreema'
 GameUIState = require 'models/GameUIState'
+GenerateTerrainModal = require 'views/editor/level/modals/GenerateTerrainModal'
+
+# Server-side Thangs collection fetch limit
+PAGE_SIZE = 1000
 
 # Moving the screen while dragging thangs constants
 MOVE_MARGIN = 0.15
 MOVE_SPEED = 13
+
 
 # Let us place these on top of other Thangs
 overlappableThangTypeNames = ['Torch', 'Chains', 'Bird', 'Cloud 1', 'Cloud 2', 'Cloud 3', 'Waterfall', 'Obstacle', 'Electrowall', 'Spike Walls']
@@ -52,6 +58,7 @@ module.exports = class ThangsTabView extends CocoView
     'click #thangs-palette-toggle': 'toggleThangsPalette'
 #    'click .add-thang-palette-icon': 'toggleThangsPalette'
     'click #rotation-menu-item button': 'onClickRotationButton'
+    'click [data-toggle="coco-modal"][data-target="editor/level/modals/GenerateTerrainModal"]': 'openGenerateTerrainModal'
 
   shortcuts:
     'esc': 'selectAddThang'
@@ -82,8 +89,14 @@ module.exports = class ThangsTabView extends CocoView
     @listenTo(@gameUIState, 'surface:stage-mouse-move', @onStageMouseMove)
     @listenTo(@gameUIState, 'change:selected', @onChangeSelected)
 
+    @thangTypes = new Backbone.Collection()
+    thangTypeCollection = new ThangTypeSearchCollection([])
+    thangTypeCollection.fetch({data: {limit: PAGE_SIZE}})
+    thangTypeCollection.skip = 0
     # should load depended-on Components, too
-    @thangTypes = @supermodel.loadCollection(new ThangTypeSearchCollection(), 'thangs').model
+    @supermodel.loadCollection(thangTypeCollection, 'thangs')
+    @listenToOnce(thangTypeCollection, 'sync', @onThangCollectionSynced)
+
     # just loading all Components for now: https://github.com/codecombat/codecombat/issues/405
     @componentCollection = new LevelComponents([], {saveBackups: true})
     @supermodel.trackRequest(@componentCollection.fetch())
@@ -96,6 +109,16 @@ module.exports = class ThangsTabView extends CocoView
     @onThangsChanged = _.debounce(@onThangsChanged)
 
     $(document).bind 'contextmenu', @preventDefaultContextMenu
+
+  onThangCollectionSynced: (collection) ->
+    return if not collection?.models?.length
+    getMore = collection.models.length is PAGE_SIZE
+    @thangTypes.add(collection.models)
+    if getMore
+      collection.skip += PAGE_SIZE
+      collection.fetch({data: {skip: collection.skip, limit: PAGE_SIZE}})
+      @supermodel.loadCollection(collection, 'thangs')
+      @listenToOnce(collection, 'sync', @onThangCollectionSynced)
 
   getRenderData: (context={}) ->
     context = super(context)
@@ -141,6 +164,10 @@ module.exports = class ThangsTabView extends CocoView
     if _.keys(@thangsTreema.data).length
       @$el.find('#canvas-overlay').css('display', 'none')
 
+  openGenerateTerrainModal: (e) ->
+    e.stopPropagation()
+    @openModalView new GenerateTerrainModal()
+  
   onFilterExtantThangs: (e) ->
     @$el.find('#extant-thangs-filter button.active').button('toggle')
     button = $(e.target).closest('button')

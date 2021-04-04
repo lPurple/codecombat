@@ -1,3 +1,4 @@
+require('app/styles/editor/level/documentation_tab.sass')
 RootView = require 'views/core/RootView'
 template = require 'templates/editor/level/level-edit-view'
 Level = require 'models/Level'
@@ -13,9 +14,8 @@ Campaigns = require 'collections/Campaigns'
 CocoCollection = require 'collections/CocoCollection'
 Course = require 'models/Course'
 
-# in the template, but need to require them to load them
-require 'views/modal/RevertModal'
-require 'views/editor/level/modals/GenerateTerrainModal'
+RevertModal = require 'views/modal/RevertModal'
+GenerateTerrainModal = require 'views/editor/level/modals/GenerateTerrainModal'
 
 ThangsTabView = require './thangs/ThangsTabView'
 SettingsTabView = require './settings/SettingsTabView'
@@ -37,19 +37,20 @@ SystemsDocumentationView = require 'views/editor/docs/SystemsDocumentationView'
 LevelFeedbackView = require 'views/editor/level/LevelFeedbackView'
 storage = require 'core/storage'
 utils = require 'core/utils'
+loadAetherLanguage = require 'lib/loadAetherLanguage'
+presenceApi = require 'core/api/presence'
 
-require 'vendor/coffeescript' # this is tenuous, since the LevelSession and LevelComponent models are what compile the code
-require 'vendor/treema'
+require 'vendor/scripts/coffeescript' # this is tenuous, since the LevelSession and LevelComponent models are what compile the code
+require 'lib/setupTreema'
 
-# Make sure that all of our Aethers are loaded, so that if we try to preview the level, it will work.
-require 'vendor/aether-javascript'
-require 'vendor/aether-python'
-require 'vendor/aether-coffeescript'
-require 'vendor/aether-lua'
-require 'vendor/aether-java'
-require 'vendor/aether-html'
-
-require 'game-libraries'
+# Make sure that all of our languages are loaded, so that if we try to preview the level, it will work.
+require 'bower_components/aether/build/html'
+Promise.all(
+  ["javascript", "python", "coffeescript", "lua"].map(
+    loadAetherLanguage
+  )
+)
+require 'lib/game-libraries'
 
 module.exports = class LevelEditView extends RootView
   id: 'editor-level-view'
@@ -79,6 +80,8 @@ module.exports = class LevelEditView extends RootView
     'click #save-branch': 'onClickSaveBranch'
     'click #load-branch': 'onClickLoadBranch'
     'mouseup .nav-tabs > li a': 'toggleTab'
+    'click [data-toggle="coco-modal"][data-target="modal/RevertModal"]': 'openRevertModal'
+    'click [data-toggle="coco-modal"][data-target="editor/level/modals/GenerateTerrainModal"]': 'openGenerateTerrainModal'
 
   constructor: (options, @levelID) ->
     super options
@@ -93,28 +96,41 @@ module.exports = class LevelEditView extends RootView
     @courses = new CocoCollection([], { url: "/db/course", model: Course})
     @supermodel.loadCollection(@courses, 'courses')
 
+  getMeta: ->
+    title: 'Level Editor'
+
   destroy: ->
+    # Currently only check presence on the level.
+    # TODO: Should this system also handle other models with local backups: 'LevelComponent', 'LevelSystem', 'ThangType'
+    if (not @level.hasLocalChanges()) and me.isAdmin()
+      presenceApi.deletePresence({levelOriginalId: @level.get('original')})
+
     clearInterval @timerIntervalID
+    clearInterval @checkPresenceIntervalID
     super()
 
   showLoading: ($el) ->
     $el ?= @$el.find('.outer-content')
     super($el)
 
-  getTitle: -> "LevelEditor - " + (@level.get('name') or '...')
-
   onLoaded: ->
     _.defer =>
       @world = @levelLoader.world
       @render()
       @timerIntervalID = setInterval @incrementBuildTime, 1000
+      if @level.get('original')
+        @checkPresenceIntervalID = setInterval @checkPresence, 15000
+        @checkPresence()
+        if me.isAdmin()
+          presenceApi.setPresence({ levelOriginalId: @level.get('original') })
+
     campaignCourseMap = {}
     campaignCourseMap[course.get('campaignID')] = course.id for course in @courses.models
     for campaign in @campaigns.models
       for levelID, level of campaign.get('levels') when levelID is @level.get('original')
         @courseID = campaignCourseMap[campaign.id]
       break if @courseID
-    if not @courseID and me.isAdmin()
+    if not @courseID and (me.isAdmin() or me.isArtisan())
       # Give it a fake course ID so we can test it in course mode before it's in a course.
       @courseID = '560f1a9f22961295f9427742'
     @getLevelCompletionRate()
@@ -147,8 +163,21 @@ module.exports = class LevelEditView extends RootView
     Backbone.Mediator.publish 'editor:level-loaded', level: @level
     @showReadOnly() if me.get('anonymous')
     @patchesView = @insertSubView(new PatchesView(@level), @$el.find('.patches-view'))
-    @listenTo @patchesView, 'accepted-patch', -> location.reload() unless key.shift  # Reload to make sure changes propagate, unless secret shift shortcut
+    @listenTo @patchesView, 'accepted-patch', (attrs) ->
+      if attrs?.save
+        f = => @startCommittingLevel(attrs)
+        setTimeout f, 400 # Give some time for closing patch modal
+      else
+        location.reload() unless key.shift  # Reload to make sure changes propagate, unless secret shift shortcut
     @$el.find('#level-watch-button').find('> span').toggleClass('secret') if @level.watching()
+
+  openRevertModal: (e) ->
+    e.stopPropagation()
+    @openModalView new RevertModal()
+
+  openGenerateTerrainModal: (e) ->
+    e.stopPropagation()
+    @openModalView new GenerateTerrainModal()
 
   onPlayLevelTeamSelect: (e) ->
     if @childWindow and not @childWindow.closed
@@ -213,7 +242,7 @@ module.exports = class LevelEditView extends RootView
     Backbone.Mediator.publish 'editor:view-switched', {}
 
   startCommittingLevel: (e) ->
-    @openModalView new SaveLevelModal level: @level, supermodel: @supermodel, buildTime: @levelBuildTime
+    @openModalView new SaveLevelModal level: @level, supermodel: @supermodel, buildTime: @levelBuildTime, commitMessage: e?.commitMessage
     Backbone.Mediator.publish 'editor:view-switched', {}
 
   showArtisanGuide: (e) ->
@@ -288,6 +317,23 @@ module.exports = class LevelEditView extends RootView
     return if application.userIsIdle
     @levelBuildTime ?= @level.get('buildTime') ? 0
     ++@levelBuildTime
+
+  checkPresence: =>
+    return unless @level.get('original')
+    presenceApi.getPresence({levelOriginalId: @level.get('original')})
+      .then(@updatePresenceUI)
+      .catch(@updatePresenceUI)
+
+  updatePresenceUI: (emails) ->
+    $("#dropdownPresenceMenu").empty()
+    if (!Array.isArray(emails))
+      $("#presence-number").text("?")
+      return
+    emails ?= []
+    $("#presence-number").text(emails.length || 0)
+    emails.forEach((email) ->
+      $("#dropdownPresenceMenu").append("<li>#{email}</li>")
+    )
 
   getTaskCompletionRatio: ->
     if not @level.get('tasks')?

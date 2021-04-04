@@ -1,3 +1,4 @@
+require('app/styles/modal/create-account-modal/sso-confirm-view.sass')
 CocoView = require 'views/core/CocoView'
 BasicInfoView = require 'views/core/CreateAccountModal/BasicInfoView'
 template = require 'templates/core/create-account-modal/single-sign-on-confirm-view'
@@ -14,7 +15,12 @@ module.exports = class SingleSignOnConfirmView extends BasicInfoView
 
   initialize: ({ @signupState } = {}) ->
     super(arguments...)
-  
+
+  afterRender: ->
+    super()
+    if @signupState.get('path') is 'teacher'
+      @$('form').submit()
+
   onClickBackButton: ->
     @signupState.set {
       ssoUsed: undefined
@@ -27,4 +33,4 @@ module.exports = class SingleSignOnConfirmView extends BasicInfoView
     type: 'object'
     properties:
       name: User.schema.properties.name
-    required: ['name']
+    required: []

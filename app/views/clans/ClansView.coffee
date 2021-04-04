@@ -1,4 +1,4 @@
-app = require 'core/application'
+require('app/styles/clans/clans.sass')
 CreateAccountModal = require 'views/core/CreateAccountModal'
 RootView = require 'views/core/RootView'
 template = require 'templates/clans/clans'
@@ -13,7 +13,12 @@ SubscribeModal = require 'views/core/SubscribeModal'
 module.exports = class ClansView extends RootView
   id: 'clans-view'
   template: template
-  
+
+  getMeta: ->
+    title: $.i18n.t 'clans.title'
+    meta: [
+      { vmid: 'meta-description', name: 'description', content: $.i18n.t 'clans.meta_description' }
+    ]
 
   events:
     'click .create-clan-btn': 'onClickCreateClan'
@@ -22,8 +27,10 @@ module.exports = class ClansView extends RootView
     'click .private-clan-checkbox': 'onClickPrivateCheckbox'
 
   initialize: ->
+    super()
+
     @publicClansArray = []
-    @myClansArray = []    
+    @myClansArray = []
     @idNameMap = {}
     @loadData()
 
@@ -62,7 +69,7 @@ module.exports = class ClansView extends RootView
 
   refreshNames: (clans) ->
     clanIDs = _.filter(clans, (clan) -> clan.get('type') is 'public')
-    clanIDs = _.map(clans, (clan) -> clan.get('ownerID'))
+    clanIDs = _.filter _.map(clans, (clan) -> clan.get('ownerID'))
     options =
       url: '/db/user/-/names'
       method: 'POST'
@@ -109,7 +116,7 @@ module.exports = class ClansView extends RootView
         error: (model, response, options) =>
           console.error 'Error saving clan', response.status
         success: (model, response, options) =>
-          app.router.navigate "/clans/#{model.id}"
+          application.router.navigate "/clans/#{model.id}"
           window.location.reload()
     else
       console.log 'Invalid name'
@@ -123,7 +130,7 @@ module.exports = class ClansView extends RootView
         error: (model, response, options) =>
           console.error 'Error joining clan', response
         success: (model, response, options) =>
-          app.router.navigate "/clans/#{clanID}"
+          application.router.navigate "/clans/#{clanID}"
           window.location.reload()
       @supermodel.addRequestResource( 'join_clan', options).load()
     else

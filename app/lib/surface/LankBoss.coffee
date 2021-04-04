@@ -11,7 +11,6 @@ module.exports = class LankBoss extends CocoClass
   subscriptions:
     'level:set-debug': 'onSetDebug'
     'sprite:highlight-sprites': 'onHighlightSprites'
-    'surface:stage-mouse-down': 'onStageMouseDown'
     'level:select-sprite': 'onSelectSprite'
     'level:suppress-selection-sounds': 'onSuppressSelectionSounds'
     'level:lock-select': 'onSetLockSelect'
@@ -142,7 +141,6 @@ module.exports = class LankBoss extends CocoClass
     @lankArray.splice @lankArray.indexOf(lank), 1
     @stopListening lank
     lank.destroy()
-    lank.thang = thang  # Keep around so that we know which thang the destroyed thang was for
 
   updateSounds: ->
     lank.playSounds() for lank in @lankArray  # hmm; doesn't work for lanks which we didn't add yet in adjustLankExistence
@@ -162,8 +160,10 @@ module.exports = class LankBoss extends CocoClass
       itemsJustEquipped = itemsJustEquipped.concat @equipNewItems thang if thang.equip
       if lank = @lanks[thang.id]
         lank.setThang thang  # make sure Lank has latest Thang
+        thang.stateChanged = true if @world.synchronous and not thang.stateless  # TODO: think of a more performant thing to do
       else
         lank = @addThangToLanks(thang)
+        thang.stateChanged = true if @world.synchronous and not thang.stateless
         Backbone.Mediator.publish 'surface:new-thang-added', thang: thang, sprite: lank
         updatedObstacles.push lank if lank.sprite.parent is @layerAdapters['Obstacle']
         lank.playSounds()
@@ -276,11 +276,6 @@ module.exports = class LankBoss extends CocoClass
     return if @flagCursorLank and lank?.thangType.get('name') is 'Flag'
     @selectLank e, lank
 
-  onStageMouseDown: (e) ->
-    return unless @handleEvents
-    return if key.shift #and @options.choosing
-    @selectLank e if e.onBackground
-
   onChangeSelected: (gameUIState, selected) ->
     oldLanks = (s.sprite for s in gameUIState.previousAttributes().selected or [])
     newLanks = (s.sprite for s in selected or [])
@@ -294,7 +289,7 @@ module.exports = class LankBoss extends CocoClass
       mark.setLank(lank)
       mark.update()
       lank.marks.selection = mark # TODO: Figure out how to non-hackily assign lank this mark
-      
+
     for lank in removedLanks
       lank.removeMark?('selection')
 

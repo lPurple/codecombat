@@ -1,3 +1,4 @@
+require('app/styles/modal/subscribe-modal.sass')
 api = require 'core/api'
 ModalView = require 'views/core/ModalView'
 template = require 'templates/core/subscribe-modal'
@@ -17,15 +18,21 @@ module.exports = class SubscribeModal extends ModalView
 
   events:
     'click #close-modal': 'hide'
-    'click .popover-content .parent-send': 'onClickParentSendButton'
-    'click .email-parent-complete button': 'onClickParentEmailCompleteButton'
     'click .purchase-button': 'onClickPurchaseButton'
     'click .stripe-lifetime-button': 'onClickStripeLifetimeButton'
+    'click .stripe-annual-button': 'onClickAnnualPurchaseButton'
     'click .back-to-products': 'onClickBackToProducts'
 
   constructor: (options={}) ->
+    #if document.location.host is 'br.codecombat.com'
+    #  document.location.href = 'http://codecombat.net.br/'
+
     super(options)
+    # Path check due to modal refresh when user isn't signed in.
+    @hideMonthlySub = options?.hideMonthlySub or window.location.pathname.startsWith('/parents') or null
     @state = 'standby'
+    @couponID = utils.getQueryVariable('coupon')
+    @subModalContinue = options.subModalContinue
     if options.products
       # this is just to get the test demo to work
       @products = options.products
@@ -33,29 +40,37 @@ module.exports = class SubscribeModal extends ModalView
     else
       @products = new Products()
       data = {}
-      if utils.getQueryVariable('coupon')?
-        data.coupon = utils.getQueryVariable('coupon')
+
+      # Attempt to get the coupon associated with the user's country.
+      # If coupon doesn't exist nothing is returned.
+      @couponID ?= me?.get('country')
+      if @couponID is 'brazil'
+        # Edge case due to misconfigured brazil coupon in stripe that is immutable
+        @couponID = 'brazil-annual'
+
+      if @couponID
+        data.coupon = @couponID
       @supermodel.trackRequest @products.fetch {data}
     @trackTimeVisible({ trackViewLifecycle: true })
     payPal.loadPayPal().then => @render()
 
   onLoaded: ->
     @basicProduct = @products.getBasicSubscriptionForUser(me)
+    @basicProductAnnual = @products.getBasicAnnualSubscriptionForUser()
+    # Process basic product coupons unless custom region pricing
+    if @couponID and @basicProduct.get('coupons')? and @basicProduct?.get('name') is 'basic_subscription'
+      @basicCoupon = _.find(@basicProduct.get('coupons'), {code: @couponID})
+    if @couponID and @basicProductAnnual.get('coupons')? and @basicProductAnnual?.get('name') is 'basic_subscription_annual'
+      @basicCouponAnnual = _.find(@basicProductAnnual.get('coupons'), {code: @couponID})
     @lifetimeProduct = @products.getLifetimeSubscriptionForUser(me)
     if @lifetimeProduct?.get('name') isnt 'lifetime_subscription'
       # Use PayPal for international users with regional pricing
       @paymentProcessor = 'PayPal'
     else
       @paymentProcessor = 'stripe'
+    @paymentProcessor = 'stripe' # Always use Stripe
     super()
     @render()
-
-  getRenderData: ->
-    context = super(arguments...)
-    if @basicProduct
-      context.gems = @basicProduct.get('gems')
-      context.basicPrice = (@basicProduct.get('amount') / 100).toFixed(2)
-    return context
 
   render: ->
     return if @state is 'purchasing'
@@ -80,8 +95,17 @@ module.exports = class SubscribeModal extends ModalView
 
   afterRender: ->
     super()
-    @setupParentButtonPopover()
+    # TODO: does this work?
     @playSound 'game-menu-open'
+    if @basicProduct and @subModalContinue
+      if @subModalContinue is 'monthly'
+        @subModalContinue = null
+        @onClickPurchaseButton()
+      else if @subModalContinue is 'lifetime'
+        @subModalContinue = null
+        # Only automatically open lifetime payment dialog for Stripe, not PayPal
+        unless @basicProduct.isRegionalSubscription()
+          @onClickStripeLifetimeButton()
 
   stripeOptions: (options) ->
     return _.assign({
@@ -89,48 +113,27 @@ module.exports = class SubscribeModal extends ModalView
       alipayReusable: true
     }, options)
 
-  setupParentButtonPopover: ->
-    popoverTitle = $.i18n.t 'subscribe.parent_email_title'
-    popoverTitle += '<button type="button" class="close" onclick="$(&#39;.parent-link&#39;).popover(&#39;hide&#39;);">&times;</button>'
-    popoverContent = ->
-      $('.parent-link-popover-content').html()
-    @$el.find('.parent-link').popover(
-      animation: true
-      html: true
-      placement: 'top'
-      trigger: 'click'
-      title: popoverTitle
-      content: popoverContent
-      container: @$el
-    ).on 'shown.bs.popover', =>
-      application.tracker?.trackEvent 'Subscription ask parent button click'
-
-  onClickParentSendButton: (e) ->
-    # TODO: Popover sometimes dismisses immediately after send
-
-    email = @$el.find('.popover-content .parent-input').val()
-    unless /[\w\.]+@\w+\.\w+/.test email
-      @$el.find('.popover-content .parent-input').parent().addClass('has-error')
-      @$el.find('.popover-content .parent-email-validator').show()
-      return false
-    me.sendParentEmail(email)
-
-    @$el.find('.popover-content .email-parent-form').hide()
-    @$el.find('.popover-content .email-parent-complete').show()
-    false
-
-  onClickParentEmailCompleteButton: (e) ->
-    @$el.find('.parent-link').popover('hide')
-
-  # For monthly subs
   onClickPurchaseButton: (e) ->
     return unless @basicProduct
     @playSound 'menu-button-click'
-    return @openModalView new CreateAccountModal() if me.get('anonymous')
-    if @basicProduct.isRegionalSubscription()
-      @startPayPalSubscribe()
-    else
-      @startStripeSubscribe()
+    if me.get('anonymous')
+      service = if @basicProduct.isRegionalSubscription() then 'paypal' else 'stripe'
+      application.tracker?.trackEvent 'Started Signup from buy monthly', {service}
+      return @openModalView new CreateAccountModal({startOnPath: 'individual', subModalContinue: 'monthly'})
+    # if @basicProduct.isRegionalSubscription()
+    #   @startPayPalSubscribe()
+    # else
+    #   @startStripeSubscribe()
+    @startStripeSubscribe() # Always use Stripe
+
+  onClickAnnualPurchaseButton: (e) ->
+    return unless @basicProductAnnual
+    @playSound 'menu-button-click'
+    if me.get('anonymous')
+      application.tracker?.trackEvent 'Started Signup from buy yearly', {service: 'stripe'}
+      return @openModalView new CreateAccountModal({startOnPath: 'individual', subModalContinue: 'yearly'})
+
+    @startYearlyStripeSubscription()
 
   startPayPalSubscribe: ->
     application.tracker?.trackEvent 'Started subscription purchase', { service: 'paypal' }
@@ -150,10 +153,19 @@ module.exports = class SubscribeModal extends ModalView
       @onSubscriptionError(jqxhr)
 
   startStripeSubscribe: ->
+    @startStripeSubscription(@basicProduct)
+
+  startYearlyStripeSubscription: ->
+    @startStripeSubscription(@basicProductAnnual)
+
+  ###
+    Starts a stripe subscription based on the product passed in.
+  ###
+  startStripeSubscription: (product) ->
     application.tracker?.trackEvent 'Started subscription purchase', { service: 'stripe' }
     options = @stripeOptions {
-      description: $.i18n.t('subscribe.stripe_description')
-      amount: @basicProduct.adjustedPrice()
+      description: if product.get('name') is 'basic_subscription_annual' then $.i18n.t('subscribe.stripe_yearly_description') else $.i18n.t('subscribe.stripe_description')
+      amount: product.adjustedPrice()
     }
 
     @purchasedAmount = options.amount
@@ -161,7 +173,12 @@ module.exports = class SubscribeModal extends ModalView
     .then ({token}) =>
       @state = 'purchasing'
       @render()
-      jqxhr = me.subscribe(token)
+      jqxhr = if product.get('name') is 'basic_subscription_annual'
+        me.subscribe(token, { planID: product.get('planID'), couponID: @basicCouponAnnual?.code })
+      else if @basicCoupon?.code
+        me.subscribe(token, {couponID: @basicCoupon.code})
+      else
+        me.subscribe(token)
       return Promise.resolve(jqxhr)
     .then =>
       application.tracker?.trackEvent 'Finished subscription purchase', { value: @purchasedAmount, service: 'stripe' }
@@ -175,14 +192,15 @@ module.exports = class SubscribeModal extends ModalView
 
   makePurchaseOps: ->
     out = {data: {}}
-    if utils.getQueryVariable('coupon')?
-      out.data.coupon = utils.getQueryVariable('coupon')
+    out.data.coupon = @couponID if @couponID
     out
 
   # For lifetime subs
   onPayPalPaymentStarted: =>
     @playSound 'menu-button-click'
-    return @openModalView new CreateAccountModal() if me.get('anonymous')
+    if me.get('anonymous')
+      application.tracker?.trackEvent 'Started Signup from buy lifetime', {service: 'paypal'}
+      return @openModalView new CreateAccountModal({startOnPath: 'individual', subModalContinue: 'lifetime'})
     startEvent = 'Start Lifetime Purchase'
     application.tracker?.trackEvent startEvent, { service: 'paypal' }
     @state = 'purchasing'
@@ -206,7 +224,9 @@ module.exports = class SubscribeModal extends ModalView
 
   onClickStripeLifetimeButton: ->
     @playSound 'menu-button-click'
-    return @openModalView new CreateAccountModal() if me.get('anonymous')
+    if me.get('anonymous')
+      application.tracker?.trackEvent 'Started Signup from buy lifetime', {service: 'stripe'}
+      return @openModalView new CreateAccountModal({startOnPath: 'individual', subModalContinue: 'lifetime'})
     startEvent = 'Start Lifetime Purchase'
     finishEvent = 'Finish Lifetime Purchase'
     descriptionTranslationKey = 'subscribe.lifetime'
@@ -234,9 +254,10 @@ module.exports = class SubscribeModal extends ModalView
       @onSubscriptionError(jqxhr, failureMessage)
 
   onSubscriptionSuccess: ->
-    Backbone.Mediator.publish 'subscribe-modal:subscribed', {}
     @playSound 'victory'
-    @hide()
+    me.fetch().then =>
+      Backbone.Mediator.publish 'subscribe-modal:subscribed', {}
+      @hide()
 
   onSubscriptionError: (jqxhrOrError, errorEventName) ->
     jqxhr = null

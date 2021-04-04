@@ -1,8 +1,10 @@
+require('app/styles/modal/create-account-modal/segment-check-view.sass')
 CocoView = require 'views/core/CocoView'
 template = require 'templates/core/create-account-modal/segment-check-view'
 forms = require 'core/forms'
 Classroom = require 'models/Classroom'
 State = require 'models/State'
+utils = require 'core/utils'
 
 module.exports = class SegmentCheckView extends CocoView
   id: 'segment-check-view'
@@ -13,6 +15,7 @@ module.exports = class SegmentCheckView extends CocoView
     'input .class-code-input': 'onInputClassCode'
     'change .birthday-form-group': 'onInputBirthday'
     'submit form.segment-check': 'onSubmitSegmentCheck'
+    'click button.play-now': 'onPlayClicked'
     'click .individual-path-button': -> @trigger 'choose-path', 'individual'
 
   initialize: ({ @signupState } = {}) ->
@@ -23,15 +26,21 @@ module.exports = class SegmentCheckView extends CocoView
     if @signupState.get('classCode')
       @checkClassCode(@signupState.get('classCode'))
     @listenTo @state, 'all', _.debounce(->
-      @renderSelectors('.render')
+      @renderSelectors('.render, .next-button')
       @trigger 'special-render'
     )
 
-  afterInsert: ->
+  afterRender: ->
     super()
-    if me.get('country') and me.get('country') isnt 'united-states'
-      # No need for US-specific COPPA check
-      @trigger 'nav-forward'
+    # HACK: Gives us the border radius required for student class code modal.
+    #       Needs timeout to ensure dom has rendered.
+    if @signupState.get('path') is 'student'
+      setTimeout(()->
+        @$('#modal-base-flat').css('border-radius', '20px')
+      , 5)
+
+  onPlayClicked: ->
+    application.router.navigate "/play", { trigger: true }
 
   getClassCode: -> @$('.class-code-input').val() or @signupState.get('classCode')
 
@@ -70,18 +79,23 @@ module.exports = class SegmentCheckView extends CocoView
 
     if @signupState.get('path') is 'student'
       @$('.class-code-input').attr('disabled', true)
+      @$('button.next-button').attr('disabled', true)
 
       @fetchClassByCode(@getClassCode())
       .then (classroom) =>
         return if @destroyed
         if classroom
           @signupState.set { classroom }
-          @trigger 'nav-forward'
+          screen = if me.get('country') and me.inEU() then 'eu-confirmation' else 'basic-info'
+          @trigger 'nav-forward', screen
         else
           @$('.class-code-input').attr('disabled', false)
+          @$('button.next-button').attr('disabled', false)
           @classroom = new Classroom()
           @state.set { classCodeValid: false, segmentCheckValid: false }
       .catch (error) ->
+        @$('.class-code-input').attr('disabled', false)
+        @$('button.next-button').attr('disabled', false)
         throw error
 
     else if @signupState.get('path') is 'individual'
@@ -91,10 +105,13 @@ module.exports = class SegmentCheckView extends CocoView
         forms.setErrorToProperty @$el, 'birthdayDay', requiredMessage
       else
         age = (new Date().getTime() - @signupState.get('birthday').getTime()) / 365.4 / 24 / 60 / 60 / 1000
-        if age > 13
-          @trigger 'nav-forward'
+        if age > utils.ageOfConsent(me.get('country'), 13)
+          screen = if me.get('country') and me.inEU() then 'eu-confirmation' else 'basic-info'
+          @trigger 'nav-forward', screen
+          window.tracker?.trackEvent 'CreateAccountModal Individual SegmentCheckView Submit', category: 'Individuals'
         else
           @trigger 'nav-forward', 'coppa-deny'
+          window.tracker?.trackEvent 'CreateAccountModal Individual SegmentCheckView Coppa Deny', category: 'Individuals'
 
   fetchClassByCode: (classCode) ->
     if not classCode

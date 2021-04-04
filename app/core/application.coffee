@@ -1,10 +1,12 @@
+i18next = require('i18next')
+jqueryI18next = require('jquery-i18next')
 FacebookHandler = require 'core/social-handlers/FacebookHandler'
 GPlusHandler = require 'core/social-handlers/GPlusHandler'
 GitHubHandler = require 'core/social-handlers/GitHubHandler'
-ModuleLoader = require 'core/ModuleLoader'
 locale = require 'locale/locale'
 {me} = require 'core/auth'
-Tracker = require 'core/Tracker'
+storage = require 'core/storage'
+Tracker = require('core/Tracker2').default
 CocoModel = require 'models/CocoModel'
 api = require 'core/api'
 
@@ -32,11 +34,6 @@ elementAcceptsKeystrokes = (el) ->
   # not radio, checkbox, range, or color
   return (tag is 'textarea' or (tag is 'input' and type in textInputTypes) or el.contentEditable in ['', 'true']) and not (el.readOnly or el.disabled)
 
-COMMON_FILES = ['/images/pages/base/modal_background.png', '/images/level/popover_background.png', '/images/level/code_palette_wood_background.png', '/images/level/code_editor_background_border.png']
-preload = (arrayOfImages) ->
-  $(arrayOfImages).each ->
-    $('<img/>')[0].src = @
-
 # IE9 doesn't expose console object unless debugger tools are loaded
 window.console ?=
   info: ->
@@ -47,95 +44,109 @@ console.debug ?= console.log  # Needed for IE10 and earlier
 
 Application = {
   initialize: ->
-#    if features.codePlay and me.isAnonymous()
-#      document.location.href = '//lenovogamestate.com/login/'
-    
     Router = require('core/Router')
-    @isProduction = -> document.location.href.search('https?://localhost') is -1
     Vue.config.devtools = not @isProduction()
 
     # propagate changes from global 'me' User to 'me' vuex module
     store = require('core/store')
+
+    routerSync = require('vuex-router-sync')
+    vueRouter = require('app/core/vueRouter').default()
+    routerSync.sync(store, vueRouter)
+
     me.on('change', ->
       store.commit('me/updateUser', me.changedAttributes())
     )
     store.commit('me/updateUser', me.attributes)
     store.commit('updateFeatures', features)
 
+    if me.showChinaRemindToast()
+      setInterval ( -> noty {
+        text: '你已经练习了一个小时了，建议休息一会儿哦'
+        layout: 'topRight'
+        type:'warning'
+        killer: false
+        timeout: 5000
+        }), 3600000  # one hour
+
+
+    @store = store
+    @api = api
+
     @isIPadApp = webkit?.messageHandlers? and navigator.userAgent?.indexOf('CodeCombat-iPad') isnt -1
     $('body').addClass 'ipad' if @isIPadApp
     $('body').addClass 'picoctf' if window.serverConfig.picoCTF
     if $.browser.msie and parseInt($.browser.version) is 10
       $("html").addClass("ie10")
-    @tracker = new Tracker()
-    @facebookHandler = new FacebookHandler()
-    @gplusHandler = new GPlusHandler()
-    @githubHandler = new GitHubHandler()
-    @moduleLoader = new ModuleLoader()
-    @moduleLoader.loadLanguage(me.get('preferredLanguage', true))
+
+    @tracker = new Tracker(store)
+    window.tracker = @tracker
+    locale.load(me.get('preferredLanguage', true))
+      .then => @tracker.initialize()
+      .catch((e) => console.error('Tracker initialization failed', e))
+
+    if me.useSocialSignOn()
+      @facebookHandler = new FacebookHandler()
+      @gplusHandler = new GPlusHandler()
+      @githubHandler = new GitHubHandler()
     $(document).bind 'keydown', preventBackspace
-    preload(COMMON_FILES)
+    moment.relativeTimeThreshold('ss', 1) # do not return 'a few seconds' when calling 'humanize'
     CocoModel.pollAchievements()
     unless me.get('anonymous')
-      # TODO: Remove logging later, once this system has proved stable
-      me.on 'change:earned', (user, newEarned) ->
-        newEarned ?= {}
-        oldEarned = user.previous('earned') ? {}
-        if oldEarned.gems isnt newEarned.gems
-          console.log 'Gems changed', oldEarned.gems, '->', newEarned.gems
-        newLevels = _.difference(newEarned.levels, oldEarned.levels)
-        if newLevels.length
-          console.log 'Levels added', newLevels
-        newItems = _.difference(newEarned.items, oldEarned.items)
-        if newItems.length
-          console.log 'Items added', newItems
-        newHeroes = _.difference(newEarned.heroes, oldEarned.heroes)
-        if newHeroes.length
-          console.log 'Heroes added', newHeroes
-      me.on 'change:points', (user, newPoints) ->
-        console.log 'Points changed', user.previous('points'), '->', newPoints
       @checkForNewAchievement()
-    $.i18n.init {
+    window.i18n = i18nextInstance = i18next.default.createInstance {
       lng: me.get('preferredLanguage', true)
-      fallbackLng: 'en'
-      resStore: locale
-      useDataAttrOptions: true
+      fallbackLng: locale.mapFallbackLanguages()
+      resources: locale
+      interpolation: {prefix: '__', suffix: '__'}
       #debug: true
-      #sendMissing: true
-      #sendMissingTo: 'current'
-      #resPostPath: '/languages/add/__lng__/__ns__'
-    }, (t) =>
-      @router = new Router()
-      @userIsIdle = false
-      onIdleChanged = (to) => => Backbone.Mediator.publish 'application:idle-changed', idle: @userIsIdle = to
-      @idleTracker = new Idle
-        onAway: onIdleChanged true
-        onAwayBack: onIdleChanged false
-        onHidden: onIdleChanged true
-        onVisible: onIdleChanged false
-        awayTimeout: 5 * 60 * 1000
-      @idleTracker.start()
-      
+    }
+    i18nextInstance.init()
+    i18nextInstance.services.languageUtils.__proto__.formatLanguageCode = (code) -> code  # Hack so that it doesn't turn zh-HANS into zh-Hans
+    jqueryI18next.init i18nextInstance, $,
+      tName: 't'  # --> appends $.t = i18next.t
+      i18nName: 'i18n'  # --> appends $.i18n = i18next
+      handleName: 'i18n'  # --> appends $(selector).i18n(opts)
+      selectorAttr: 'data-i18n'  # selector for translating elements
+      targetAttr: 'i18n-target'  # data-() attribute to grab target element to translate (if different than itself)
+      optionsAttr: 'i18n-options'  # data-() attribute that contains options, will load/set if useOptionsAttr = true
+      useOptionsAttr: true  # see optionsAttr
+      parseDefaultValueFromContent: true  # parses default values from content ele.val or ele.text
+    @router = new Router()
+    @userIsIdle = false
+    onIdleChanged = (to) => => Backbone.Mediator.publish 'application:idle-changed', idle: @userIsIdle = to
+    @idleTracker = new Idle
+      onAway: onIdleChanged true
+      onAwayBack: onIdleChanged false
+      onHidden: onIdleChanged true
+      onVisible: onIdleChanged false
+      awayTimeout: 5 * 60 * 1000
+    @idleTracker.start()
+
   checkForNewAchievement: ->
     if me.get('lastAchievementChecked')
       startFrom = new Date(me.get('lastAchievementChecked'))
     else
       startFrom = me.created()
-    
+
     daysSince = moment.duration(new Date() - startFrom).asDays()
     if daysSince > 1
       me.checkForNewAchievement().then => @checkForNewAchievement()
-      
+
   featureMode: {
     useChina: -> api.admin.setFeatureMode('china').then(-> document.location.reload())
-    useCodePlay: -> api.admin.setFeatureMode('code-play').then(-> document.location.reload())
     usePicoCtf: -> api.admin.setFeatureMode('pico-ctf').then(-> document.location.reload())
     useBrainPop: -> api.admin.setFeatureMode('brain-pop').then(-> document.location.reload())
     clear: -> api.admin.clearFeatureMode().then(-> document.location.reload())
   }
-      
+
+  isProduction: -> document.location.href.search('https?://localhost') is -1
+
   loadedStaticPage: window.alreadyLoadedView?
-  
+
+  setHocCampaign: (campaignSlug) -> storage.save('hoc-campaign', campaignSlug)
+  getHocCampaign: -> storage.load('hoc-campaign')
+
 }
 
 module.exports = Application

@@ -3,7 +3,7 @@ template = require 'templates/play/level/tome/spell_palette_entry'
 {me} = require 'core/auth'
 filters = require 'lib/image_filter'
 DocFormatter = require './DocFormatter'
-ace = require 'ace'
+ace = require('lib/aceContainer')
 utils = require 'core/utils'
 
 module.exports = class SpellPaletteEntryView extends CocoView
@@ -78,7 +78,7 @@ module.exports = class SpellPaletteEntryView extends CocoView
     Backbone.Mediator.publish 'tome:palette-clicked', thang: @thang, prop: @doc.name, entry: @
 
   onFrameChanged: (e) ->
-    return unless e.selectedThang?.id is @thang.id
+    return unless e.selectedThang?.id is @thang?.id
     @options.thang = @thang = @docFormatter.options.thang = e.selectedThang  # Update our thang to the current version
 
   onPaletteHovered: (e) ->

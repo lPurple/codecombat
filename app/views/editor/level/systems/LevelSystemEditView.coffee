@@ -1,12 +1,12 @@
+require('app/styles/editor/level/system/level-system-edit-view.sass')
 CocoView = require 'views/core/CocoView'
 template = require 'templates/editor/level/system/level-system-edit-view'
 LevelSystem = require 'models/LevelSystem'
 SystemVersionsModal = require 'views/editor/level/systems/SystemVersionsModal'
 PatchesView = require 'views/editor/PatchesView'
 SaveVersionModal = require 'views/editor/modal/SaveVersionModal'
-ace = require 'ace'
-
-require 'vendor/treema'
+require 'lib/setupTreema'
+ace = require('lib/aceContainer')
 
 module.exports = class LevelSystemEditView extends CocoView
   id: 'level-system-edit-view'
@@ -84,8 +84,12 @@ module.exports = class LevelSystemEditView extends CocoView
     @editor = ace.edit(editorEl[0])
     @editor.setReadOnly(me.get('anonymous'))
     session = @editor.getSession()
-    session.setMode 'ace/mode/coffee'
-    session.setTabSize 2
+    if @levelSystem.get('codeLanguage') is 'javascript'
+      session.setMode 'ace/mode/javascript'
+      session.setTabSize 4
+    else
+      session.setMode 'ace/mode/coffee'
+      session.setTabSize 2
     session.setNewLineMode = 'unix'
     session.setUseSoftTabs true
     @editor.on('change', @onEditorChange)

@@ -350,14 +350,11 @@ $itemSlotGridHeight: 51px
         cursor: pointer
 
         &:hover
-          padding: 0
-          img
-            margin: 1px
           button
             //margin-top: -2px
             //height: 19px
-            font-size: 12px
-            margin: -1px 1px 1px 1px
+            position: relative
+            top: -1px
 
             &:active, &.active
               background-position: -57px * 2 0
@@ -451,6 +448,9 @@ $itemSlotGridHeight: 51px
     
   #choose-hero-button
     left: 20px
+    width: 254px
+    background-size: 254px 55px
+    padding-left: 14px
     
   #play-level-button
     right: 414px
@@ -540,6 +540,10 @@ $itemSlotGridHeight: 51px
       &.Ranger
         left: -16px
 
+      &.armando-hoyos
+        left: 74px
+        bottom: 40px
+
   #hero-image-head
     z-index: 16
   #hero-image-hair
@@ -556,6 +560,10 @@ $itemSlotGridHeight: 51px
       @include rotate(-15deg)
       left: 53px
       bottom: 54px
+
+      &.armando-hoyos
+        left: 49px
+        bottom: 66px
 
   .doll-image
     position: absolute
@@ -628,7 +636,7 @@ $itemSlotGridHeight: 51px
     &.head
       z-index: 17
 
-    &.Ranger:not(.feet)
+    &.Ranger:not(.feet):not(.pet)
       &.female
         left: -7px
 

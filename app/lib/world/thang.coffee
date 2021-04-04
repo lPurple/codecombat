@@ -63,6 +63,7 @@ module.exports = class Thang
       else
         @world?.classMap[componentClass.className] ?= componentClass
       c = new componentClass componentConfig ? {}
+      c.world = @world
       c.attach @
 
   # [prop, type]s of properties which have values tracked across WorldFrames. Also call keepTrackedProperty some non-expensive time when you change it or it will be skipped.
@@ -174,7 +175,7 @@ module.exports = class Thang
     colorConfigs = @teamColors or @world?.getTeamColors() or {}
     options = {colorConfig: {}}
     if @id is 'Hero Placeholder' and not @world.getThangByID 'Hero Placeholder 1'
-      return options  # No team colors for heroes on single-player levels
+      return options
     if @team and teamColor = colorConfigs[@team]
       options.colorConfig.team = teamColor
     if @color and color = @grabColorConfig @color

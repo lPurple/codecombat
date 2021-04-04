@@ -57,6 +57,8 @@ module.exports = class LadderSubmissionView extends CocoView
     return @showApologeticSignupModal() if me.get('anonymous')
     @playSound 'menu-button-click'
     @setRankingButtonText 'submitting'
+    if currentAge = me.age()
+      @session.set 'creatorAge', currentAge
     success = =>
       @setRankingButtonText 'submitted' unless @destroyed
       Backbone.Mediator.publish 'ladder:game-submitted', session: @session, level: @level
@@ -74,11 +76,11 @@ module.exports = class LadderSubmissionView extends CocoView
         data: ajaxData
         success: success
         error: failure
-      if @mirrorSession and @mirrorSession.get('submittedCode')
+      if @mirrorSession
         # Also submit the mirrorSession after the main session submits successfully.
         mirrorAjaxData = _.clone ajaxData
         mirrorAjaxData.session = @mirrorSession.id
-        mirrorCode = @mirrorSession.get('code')
+        mirrorCode = @mirrorSession.get('code') ? {}
         if @session.get('team') is 'humans'
           mirrorCode['hero-placeholder-1'] = @session.get('code')['hero-placeholder']
         else

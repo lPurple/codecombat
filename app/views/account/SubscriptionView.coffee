@@ -1,3 +1,4 @@
+require('app/styles/account/subscription-view.sass')
 RootView = require 'views/core/RootView'
 template = require 'templates/account/subscription-view'
 CocoCollection = require 'collections/CocoCollection'
@@ -50,6 +51,9 @@ module.exports = class SubscriptionView extends RootView
 
   constructor: (options) ->
     super(options)
+    #inBrazil = document.location.host is 'br.codecombat.com'
+    #if inBrazil and not me.hasSubscription()
+    #  document.location.href = 'http://codecombat.net.br/'
     prepaidCode = utils.getQueryVariable '_ppc'
     @personalSub = new PersonalSub(@supermodel, prepaidCode)
     @recipientSubs = new RecipientSubs(@supermodel)
@@ -58,6 +62,9 @@ module.exports = class SubscriptionView extends RootView
     @recipientSubs.update => @render?()
     @products = new Products()
     @supermodel.loadCollection @products
+
+  getMeta: ->
+    title: $.i18n.t 'account.subscription_title'
 
   # Personal Subscriptions
 
@@ -173,34 +180,30 @@ class PersonalSub
     me.patch({headers: {'X-Change-Plan': 'true'}})
 
   unsubscribe: (message, render) ->
-    removeSub = =>
-      payPalInfo = me.get('payPal')
-      stripeInfo = _.clone(me.get('stripe'))
-      if stripeInfo
-        delete stripeInfo.planID
-        me.set('stripe', stripeInfo)
-        me.once 'sync', ->
-          window.tracker?.trackEvent 'Unsubscribe End', message: message
-          document.location.reload()
-        me.patch({headers: {'X-Change-Plan': 'true'}})
-      else if payPalInfo?.billingAgreementID
-        api.users.cancelBillingAgreement({userID: me.id, billingAgreementID: payPalInfo?.billingAgreementID})
-        .then (response) =>
-          window.tracker?.trackEvent 'Unsubscribe End', message: message
-          document.location.reload()
-        .catch (jqxhr) =>
-          console.error('PayPal unsubscribe', jqxhr)
+    payPalInfo = me.get('payPal')
+    stripeInfo = _.clone(me.get('stripe'))
+    if payPalInfo?.billingAgreementID
+      api.users.cancelBillingAgreement({userID: me.id, billingAgreementID: payPalInfo?.billingAgreementID})
+      .then (response) =>
+        window.tracker?.trackEvent 'Unsubscribe End', message: message
+        document.location.reload()
+      .catch (jqxhr) =>
+        console.error('PayPal unsubscribe', jqxhr)
+    else if stripeInfo
+      delete stripeInfo.planID
+      me.set('stripe', stripeInfo)
+      me.once 'sync', ->
+        window.tracker?.trackEvent 'Unsubscribe End', message: message
+        document.location.reload()
+      me.patch({headers: {'X-Change-Plan': 'true'}})
 
-      else
-        console.error "Tried to unsubscribe without PayPal or Stripe user info."
-        @state = 'unknown_error'
-        @stateMessage = "You do not appear to be subscribed."
-        render()
-    if message
-      $.post '/contact', message: message, subject: 'Cancellation', (response) ->
-        removeSub()
     else
-      removeSub()
+      console.error "Tried to unsubscribe without PayPal or Stripe user info."
+      @state = 'unknown_error'
+      @stateMessage = "You do not appear to be subscribed."
+      render()
+    if message
+      $.post '/contact', message: message, subject: 'Cancellation'
 
   update: (render) ->
     stripeInfo = me.get('stripe')
@@ -210,6 +213,7 @@ class PersonalSub
     @state = 'loading'
 
     if stripeInfo
+      @free = stripeInfo.free
       if stripeInfo.sponsorID
         @sponsor = true
         onSubSponsorSuccess = (sponsorInfo) =>
@@ -244,6 +248,11 @@ class PersonalSub
             periodEnd = new Date((sub.trial_end or sub.current_period_end) * 1000)
             if sub.cancel_at_period_end
               @activeUntil = periodEnd
+              if @free and typeof @free is 'string' and new Date(@free) > @activeUntil
+                # stripe.free trumps end of period cancellation date, switch to that state
+                delete @self
+                delete @active
+                delete @subscribed
             else if sub.discount?.coupon?.id isnt 'free'
               @nextPaymentDate = periodEnd
               # NOTE: This checks the product list for one that corresponds to their
@@ -261,6 +270,19 @@ class PersonalSub
                 @cost = "$#{(product.get('amount')/100).toFixed(2)}"
               else
                 @cost = "$#{(sub.plan.amount/100).toFixed(2)}"
+
+              # For the new annual plan, use the stripe information as source of truth.
+              if me.get('stripe')?.planID is "price_1Hja49KaReE7xLUdlPuATOvQ"
+                if sub.discount?.coupon?.percent_off_precise
+                  # Get percentage off from stripe data.
+                  discount = sub.plan.amount * (sub.discount.coupon.percent_off_precise / 100)
+                  @cost = "$#{((sub.plan.amount - discount)/100).toFixed(2)}"
+                else if sub.discount?.coupon?.amount_off
+                  discount = sub.discount?.coupon?.amount_off
+                  @cost = "$#{((sub.plan.amount - discount)/100).toFixed(2)}"
+                else
+                  @cost = "$#{(sub.plan.amount/100).toFixed(2)}"
+
           else
             console.error "Could not find personal subscription #{me.get('stripe')?.customerID} #{me.get('stripe')?.subscriptionID}"
           delete @state
@@ -273,16 +295,11 @@ class PersonalSub
           render()
         @supermodel.loadCollection(payments, 'payments', {cache: false})
 
-      else if stripeInfo.free
-        @free = stripeInfo.free
+      else if @free
         delete @state
         render()
 
-      else
-        delete @state
-        render()
-
-    else if payPalInfo?.billingAgreementID
+    if not @subscribed and payPalInfo?.billingAgreementID
       @self = true
       @active = true
       @subscribed = true

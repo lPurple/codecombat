@@ -1,3 +1,4 @@
+require('app/styles/editor/thang/thang-type-edit-view.sass')
 ThangType = require 'models/ThangType'
 SpriteParser = require 'lib/sprites/SpriteParser'
 SpriteBuilder = require 'lib/sprites/SpriteBuilder'
@@ -5,7 +6,11 @@ Lank = require 'lib/surface/Lank'
 LayerAdapter = require 'lib/surface/LayerAdapter'
 Camera = require 'lib/surface/Camera'
 DocumentFiles = require 'collections/DocumentFiles'
-require 'vendor/treema'
+require 'lib/setupTreema'
+createjs = require 'lib/createjs-parts'
+LZString = require 'lz-string'
+initSlider = require 'lib/initSlider'
+replaceRgbaWithCustomizableHex = require('./replaceRgbaWithCustomizableHex.js').default
 
 # in the template, but need to require to load them
 require 'views/modal/RevertModal'
@@ -21,8 +26,11 @@ SaveVersionModal = require 'views/editor/modal/SaveVersionModal'
 template = require 'templates/editor/thang/thang-type-edit-view'
 storage = require 'core/storage'
 ExportThangTypeModal = require './ExportThangTypeModal'
+RevertModal = require 'views/modal/RevertModal'
 
-require 'game-libraries'
+require 'lib/game-libraries'
+
+AnimateImporterWorker = require 'worker-loader!./AnimateImportWorker.js'
 
 CENTER = {x: 200, y: 400}
 
@@ -78,17 +86,17 @@ defaultTasks =
   Hero: commonTasks.concat animatedThangTypeTasks.concat purchasableTasks.concat [
     'Set the hero class.'
     'Add Extended Hero Name.'
+    'Add Short Hero Name.'
+    'Add Hero Gender.'
     'Upload Hero Doll Images.'
     'Upload Pose Image.'
     'Start a new name category in names.coffee.'
     'Set up hero stats in Equips, Attackable, Moves.'
     'Set Collects collectRange to 2, Sees visualRange to 60.'
     'Add any custom hero abilities.'
-    'Add to ThangType model hard-coded hero ids/classes list.'
-    'Add to LevelHUDView hard-coded hero short names list.'
-    'Add to InventoryView hard-coded hero gender list.'
-    'Add to PlayHeroesModal hard-coded hero positioning logic.'
-    'Add as unlock to a level and add unlockLevelName here.'
+    'Add to ThangTypeConstants hard-coded hero ids/classes list.'
+    'Add hero gender.'
+    'Add hero short name.'
   ]
   Floor: commonTasks.concat containerTasks.concat [
     'Add 10 x 8.5 snapping.'
@@ -144,8 +152,10 @@ module.exports = class ThangTypeEditView extends RootView
   events:
     'click #clear-button': 'clearRawData'
     'click #upload-button': -> @$el.find('input#real-upload-button').click()
+    'click #upload-animate-button': -> @$el.find('input#real-animate-upload-button').click()
     'click #set-vector-icon': 'onClickSetVectorIcon'
     'change #real-upload-button': 'animationFileChosen'
+    'change #real-animate-upload-button': 'animateAnimationFileChosen'
     'change #animations-select': 'showAnimation'
     'click #marker-button': 'toggleDots'
     'click #stop-button': 'stopAnimation'
@@ -162,6 +172,11 @@ module.exports = class ThangTypeEditView extends RootView
     'mouseup #canvas': 'onCanvasMouseUp'
     'mousemove #canvas': 'onCanvasMouseMove'
     'click #export-sprite-sheet-btn': 'onClickExportSpriteSheetButton'
+    'click [data-toggle="coco-modal"][data-target="modal/RevertModal"]': 'openRevertModal'
+
+  openRevertModal: (e) ->
+    e.stopPropagation()
+    @openModalView new RevertModal()
 
   onClickSetVectorIcon: ->
     modal = new VectorIconSetupModal({}, @thangType)
@@ -259,7 +274,7 @@ module.exports = class ThangTypeEditView extends RootView
     _.defer @refreshAnimation
     @toggleDots(false)
 
-    createjs.Ticker.setFPS(30)
+    createjs.Ticker.framerate = 30
     createjs.Ticker.addEventListener('tick', @stage)
 
   toggleDots: (newShowDots) ->
@@ -327,18 +342,58 @@ module.exports = class ThangTypeEditView extends RootView
   # upload
 
   animationFileChosen: (e) ->
-    @file = e.target.files[0]
-    return unless @file
-    return unless _.string.endsWith @file.type, 'javascript'
+    file = e.target.files[0]
+    return unless file
+    return unless _.string.endsWith file.type, 'javascript'
 #    @$el.find('#upload-button').prop('disabled', true)
     @reader = new FileReader()
     @reader.onload = @onFileLoad
-    @reader.readAsText(@file)
+    @reader.readAsText(file)
+
+  animateAnimationFileChosen: (e) ->
+    file = e.target.files[0]
+    return unless file
+    if not _.string.endsWith file.type, 'javascript'
+      noty({text: "Only accepts files ending with '.js'", type:"error", timeout: 5000})
+      return
+    if not confirm("This button may have unknown effects. Are you sure you want to continue?")
+      noty({text: "Cancelled import of '.js' file", type:"info", timeout: 3000})
+      return
+    @reader = new FileReader()
+    @reader.onload = @onAnimateFileLoad
+    @reader.readAsText(file)
+
+  onAnimateFileLoad: (e) =>
+    result = @reader.result
+
+    worker = new AnimateImporterWorker()
+    worker.addEventListener('message', (event) =>
+      worker.terminate()
+      @hideLoading()
+
+      data = event.data
+
+      if (data.output)
+        @thangType.attributes.raw = @thangType.attributes.raw or {}
+        _.merge(@thangType.attributes.raw, JSON.parse(data.output))
+
+        @fileLoaded()
+      else if (data.error)
+        noty({ text: "Error occurred. Check console. Please inform eng team and provide Adobe Animate File.", type:"error", timeout: 10000000 })
+        throw data.error
+    )
+
+    @showLoading()
+    @updateProgress(0.50)
+    worker.postMessage({ input: result })
 
   onFileLoad: (e) =>
     result = @reader.result
     parser = new SpriteParser(@thangType)
     parser.parse(result)
+    @fileLoaded()
+
+  fileLoaded: () =>
     @treema.set('raw', @thangType.get('raw'))
     @updateSelectBox()
     @refreshAnimation()
@@ -438,10 +493,10 @@ module.exports = class ThangTypeEditView extends RootView
   # sliders
 
   initSliders: ->
-    @rotationSlider = @initSlider $('#rotation-slider', @$el), 50, @updateRotation
-    @scaleSlider = @initSlider $('#scale-slider', @$el), 29, @updateScale
-    @resolutionSlider = @initSlider $('#resolution-slider', @$el), 39, @updateResolution
-    @healthSlider = @initSlider $('#health-slider', @$el), 100, @updateHealth
+    @rotationSlider = initSlider $('#rotation-slider', @$el), 50, @updateRotation
+    @scaleSlider = initSlider $('#scale-slider', @$el), 29, @updateScale
+    @resolutionSlider = initSlider $('#resolution-slider', @$el), 39, @updateResolution
+    @healthSlider = initSlider $('#health-slider', @$el), 100, @updateHealth
 
   updateRotation: =>
     value = parseInt(180 * (@rotationSlider.slider('value') - 50) / 50)
@@ -661,6 +716,16 @@ module.exports = class ThangTypeEditView extends RootView
   onClickExportSpriteSheetButton: ->
     modal = new ExportThangTypeModal({}, @thangType)
     @openModalView(modal)
+
+  # Run it in the editor/thang/<thang-type> view by inputting the following:
+  # ```
+  # currentView.normalizeColorsForCustomization()
+  # ```
+  # into the console. Used to normalize the shape colors for Ozaria Heroes to
+  # support character customization.
+  normalizeColorsForCustomization: ->
+    @thangType.attributes.raw.shapes = replaceRgbaWithCustomizableHex(@thangType.attributes.raw.shapes)
+    @treema.set('raw', @thangType.get('raw'))
 
   destroy: ->
     @camera?.destroy()

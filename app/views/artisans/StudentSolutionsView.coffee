@@ -1,3 +1,4 @@
+require('app/styles/artisans/student-solutions-view.sass')
 RootView = require 'views/core/RootView'
 template = require 'templates/artisans/student-solutions-view'
 
@@ -7,15 +8,10 @@ Campaign = require 'models/Campaign'
 Levels = require 'collections/Levels'
 Level = require 'models/Level'
 LevelSessions = require 'collections/LevelSessions'
-ace = require 'ace'
-utils = require 'core/utils'
-Aether = require 'aether'
-require 'vendor/aether-python'
-require 'esper'
-
-unless typeof esper is 'undefined'
-  realm = new esper().realm
-  parser = realm.parser.bind(realm)
+ace = require('lib/aceContainer')
+aceUtils = require 'core/aceUtils'
+{createAetherOptions} = require 'lib/aether_utils'
+loadAetherLanguage = require 'lib/loadAetherLanguage'
 
 module.exports = class StudentSolutionsView extends RootView
   template: template
@@ -30,6 +26,10 @@ module.exports = class StudentSolutionsView extends RootView
 
   initialize: () ->
     @validLanguages = ['python', 'javascript']
+    Promise.all(@validLanguages.map loadAetherLanguage).then =>
+      unless typeof esper is 'undefined'
+        realm = new esper().realm
+        @parser = realm.parser.bind(realm)
     @resetLevelInfo()
     @resetSolutionsInfo()
 
@@ -92,7 +92,7 @@ module.exports = class StudentSolutionsView extends RootView
       editor = ace.edit el
       aceSession = editor.getSession()
       aceDoc = aceSession.getDocument()
-      aceSession.setMode utils.aceEditModes[lang]
+      aceSession.setMode aceUtils.aceEditModes[lang]
       editor.setTheme 'ace/theme/textmate'
       editor.setReadOnly true
 
@@ -182,7 +182,7 @@ module.exports = class StudentSolutionsView extends RootView
       # aether.problems?
     if lang is 'javascript'
       try
-        ast = parser(src)
+        ast = @parser(src)
       catch e
         @stats[lang].errors += 1
         return null

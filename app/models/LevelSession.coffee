@@ -1,5 +1,6 @@
 CocoModel = require './CocoModel'
 api = require('core/api')
+LevelConstants = require 'lib/LevelConstants'
 
 module.exports = class LevelSession extends CocoModel
   @className: 'LevelSession'
@@ -19,7 +20,7 @@ module.exports = class LevelSession extends CocoModel
     @set 'permissions', permissions
 
   getSourceFor: (spellKey) ->
-    # spellKey ex: 'tharin/plan'
+    # spellKey ex: 'hero-placeholder/plan'
     code = @get('code')
     parts = spellKey.split '/'
     code?[parts[0]]?[parts[1]]
@@ -40,18 +41,7 @@ module.exports = class LevelSession extends CocoModel
     @get('submittedCodeLanguage')? and @get('team')?
 
   completed: ->
-    @get('state')?.complete || @get('submitted') || false
-
-  shouldAvoidCorruptData: (attrs) ->
-    return false unless me.team is 'humans'
-    if _.string.startsWith (attrs?.code ? @get('code'))?.anya?.makeBid ? '', 'var __interceptThis'
-      noty text: "Not saving session--it's trying to overwrite Anya's code with transpiled output. Please let us know and help us reproduce this bug!", layout: 'topCenter', type: 'error', killer: false, timeout: 120000
-      return true
-    false
-
-  save: (attrs, options) ->
-    return if @shouldAvoidCorruptData attrs
-    super attrs, options
+    @get('state')?.complete || false
 
   increaseDifficulty: (callback) ->
     state = @get('state') ? {}
@@ -81,34 +71,35 @@ module.exports = class LevelSession extends CocoModel
     newTopScores = []
     now = new Date()
     for scoreType in level.get('scoreTypes') ? []
+      scoreType = scoreType.type if scoreType.type
       oldTopScore = _.find oldTopScores, type: scoreType
       newScore = scores[scoreType]
       unless newScore?
-        newTopScores.push oldTopScore
+        newTopScores.push oldTopScore if oldTopScore
         continue
-      newScore *= -1 if scoreType in ['time', 'damage-taken']  # Make it so that higher is better
+      newScore *= -1 if scoreType in LevelConstants.lowerIsBetterScoreTypes  # Index relies on "top" scores being higher numbers
       if not oldTopScore? or newScore > oldTopScore.score
         newTopScores.push type: scoreType, date: now, score: newScore
       else
         newTopScores.push oldTopScore
     state.topScores = newTopScores
     @set 'state', state
+    scores = LevelSession.getTopScores({level: level.toJSON(), session: @toJSON()})
+    Backbone.Mediator.publish('level:top-scores-updated', {scores})
 
-  generateSpellsObject: (options={}) ->
-    {level} = options
-    {createAetherOptions} = require 'lib/aether_utils'
-    aetherOptions = createAetherOptions functionName: 'plan', codeLanguage: @get('codeLanguage'), skipProtectAPI: options.level?.isType('game-dev')
-    spellThang = thang: {id: 'Hero Placeholder'}, aether: new Aether aetherOptions
-    spells = "hero-placeholder/plan": thang: spellThang, name: 'plan'
-    source = @get('code')?['hero-placeholder']?.plan ? ''
-    try
-      spellThang.aether.transpile source
-    catch e
-      console.log "Couldn't transpile!\n#{source}\n", e
-      spellThang.aether.transpile ''
-    spells
+  @getTopScores: ({level, session}) ->
+    Level = require('models/Level')
+    scores = (_.clone(score) for score in session.state?.topScores ? [])
+    score.score *= -1 for score in scores when score.type in LevelConstants.lowerIsBetterScoreTypes  # Undo negative storage for display
+    if level
+      for sessionScore in scores
+        thresholdAchieved = Level.thresholdForScore(_.assign(_.pick(sessionScore, 'score', 'type'), {level}))
+        if thresholdAchieved
+          sessionScore.thresholdAchieved = thresholdAchieved
+    scores
 
-  isFake: -> @id is 'A Fake Session ID'
+  @fakeID: 'ateacherfakesessionidval'  # 24 characters like other IDs for schema validation
+  isFake: -> @id is LevelSession.fakeID
 
   inLeague: (leagueId) ->
     return false unless @get('leagues')
@@ -136,5 +127,43 @@ module.exports = class LevelSession extends CocoModel
     @set('keyValueDb', keyValueDb) if _.size keyValueDb
     delete @originalKeyValueDb
 
+  countOriginalLinesOfCode: (level) ->
+    # Count non-whitespace, non-comment lines starting at first unique code line
+    # TODO: diff better to find truly changed lines
+    sampleCodeByLanguage = level.getSampleCode @get('team')
+    sampleCode = sampleCodeByLanguage[@get('codeLanguage')] ? sampleCodeByLanguage.html ? sampleCodeByLanguage.python ? ''
+    sampleCode = sampleCode.replace @singleLineCommentOnlyRegex(), ''
+    sampleCodeLines = sampleCode.split(/\n+/)
+    sampleCodeLines = _.filter sampleCodeLines
 
+    thang = if @get('team') is 'ogres' then 'hero-placeholder-1' else 'hero-placeholder'
+    code = @getSourceFor("#{thang}/plan") ? ''
+    code = code.replace @singleLineCommentOnlyRegex(), ''
+    codeLines = code.split(/\n+/)
+    codeLines = _.filter codeLines
 
+    i = 0
+    while i < codeLines.length and i < sampleCodeLines.length
+      break if codeLines[i] isnt sampleCodeLines[i]
+      ++i
+    count = codeLines.length - i
+    #console.log "Got", count, "original lines from\n", code, "\n-----------\n", sampleCode
+    Math.min count, 1000
+
+  singleLineCommentOnlyRegex: ->
+    if @get('codeLanguage') is 'html'
+      commentStart = "#{commentStarts.html}|#{commentStarts.css}|#{commentStarts.javascript}"
+    else
+      commentStart = commentStarts[@get('codeLanguage')] or '#'
+    new RegExp "^[ \t]*(#{commentStart}).*$", 'gm'
+
+# Note: These need to be double-escaped for insertion into regexes
+commentStarts =
+  javascript: '//'
+  python: '#'
+  coffeescript: '#'
+  lua: '--'
+  java: '//'
+  cpp: '//'
+  html: '<!--'
+  css: '/\\*'

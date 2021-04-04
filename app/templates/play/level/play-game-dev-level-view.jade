@@ -1,20 +1,23 @@
 - var ready = !(view.state.get('errorMessage') || view.state.get('loading'))
 
+include ../game-dev-goals
+
 .container-fluid.style-flat
   #game-row.row
     .col-xs-9
       #canvas-wrapper
+        #game-dev-track-view
         canvas(width=924, height=589)#webgl-surface
         canvas(width=924, height=589)#normal-surface
 
     #info-col.col-xs-3
       .panel.panel-default
-        .panel-body.text-center
+        #directions.panel-body.text-center
           if view.state.get('errorMessage')
             .alert.alert-danger= view.state.get('errorMessage')
 
           if view.level.id && view.session.id
-            h3.m-y-1= view.level.get('name')
+            h3.m-y-1= view.getLevelName()
             h4= view.state.get('creatorString')
             hr
 
@@ -27,7 +30,10 @@
             h3
               span(data-i18n="play_level.directions")
               | :
-            p!= view.howToPlayText
+            if view.studentGoals && view.studentGoals.length
+              +game-dev-goals(view.studentGoals)
+            else
+              p!= view.howToPlayText
             hr
 
         if ready

@@ -3,6 +3,21 @@ app = null
 utils = require './utils'
 { installVueI18n } = require 'locale/locale'
 
+VueRouter = require 'vue-router'
+Vuex = require 'vuex'
+VTooltip = require 'v-tooltip'
+VueMoment = require 'vue-moment'
+VueMeta = require 'vue-meta'
+VueYoutube = require 'vue-youtube'
+
+Vue.use(VueRouter.default)
+Vue.use(Vuex.default)
+Vue.use(VueMoment.default)
+Vue.use(VueYoutube.default)
+
+Vue.use(VTooltip.default)
+Vue.use(VueMeta)
+
 channelSchemas =
   'auth': require 'schemas/subscriptions/auth'
   'bus': require 'schemas/subscriptions/bus'
@@ -39,9 +54,11 @@ init = ->
   path = document.location.pathname
   app.testing = _.string.startsWith path, '/test'
   app.demoing = _.string.startsWith path, '/demo'
-  setUpBackboneMediator()
+  setUpBackboneMediator(app)
   app.initialize()
   loadOfflineFonts() unless app.isProduction()
+  # We always want to load this font.
+  $('head').prepend '<link rel="stylesheet" type="text/css" href="/fonts/vt323.css">'
   Backbone.history.start({ pushState: true })
   handleNormalUrls()
   setUpMoment() # Set up i18n for moment
@@ -54,26 +71,29 @@ handleNormalUrls = ->
   $(document).on 'click', "a[href^='/']", (event) ->
 
     href = $(event.currentTarget).attr('href')
+    target = $(event.currentTarget).attr('target')
 
     # chain 'or's for other black list routes
     passThrough = href.indexOf('sign_out') >= 0
 
     # Allow shift+click for new tabs, etc.
-    if !passThrough && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
-      event.preventDefault()
+    if passThrough or event.altKey or event.ctrlKey or event.metaKey or event.shiftKey or target is '_blank'
+      return
 
-      # Remove leading slashes and hash bangs (backward compatablility)
-      url = href.replace(/^\//,'').replace('\#\!\/','')
+    event.preventDefault()
 
-      # Instruct Backbone to trigger routing events
-      app.router.navigate url, { trigger: true }
+    # Remove leading slashes and hash bangs (backward compatablility)
+    url = href.replace(/^\//,'').replace('\#\!\/','')
 
-      return false
+    # Instruct Backbone to trigger routing events
+    app.router.navigate url, { trigger: true }
 
-setUpBackboneMediator = ->
+    return false
+
+setUpBackboneMediator = (app) ->
   Backbone.Mediator.addDefSchemas schemas for definition, schemas of definitionSchemas
   Backbone.Mediator.addChannelSchemas schemas for channel, schemas of channelSchemas
-  Backbone.Mediator.setValidationEnabled document.location.href.search(/codecombat.com/) is -1
+  Backbone.Mediator.setValidationEnabled(not app.isProduction())
   if false  # Debug which events are being fired
     originalPublish = Backbone.Mediator.publish
     Backbone.Mediator.publish = ->
@@ -87,7 +107,7 @@ setUpMoment = ->
       'zh-HANS': 'zh-cn'
       'zh-HANT': 'zh-tw'
     }[lang] or lang
-    moment.lang lang.toLowerCase(), {}
+    moment.locale lang.toLowerCase()
     # TODO: this relies on moment having all languages baked in, which is a performance hit; should switch to loading the language module we need on demand.
   setMomentLanguage me.get('preferredLanguage', true)
   me.on 'change:preferredLanguage', (me) ->
@@ -111,6 +131,7 @@ watchForErrors = ->
 
   showError = (text) ->
     return if currentErrors >= 3
+    return if app.isProduction() and not me.isAdmin() # Don't show noty error messages in production when not an admin
     return unless me.isAdmin() or document.location.href.search(/codecombat.com/) is -1 or document.location.href.search(/\/editor\//) isnt -1
     ++currentErrors
     unless webkit?.messageHandlers  # Don't show these notys on iPad
@@ -196,6 +217,7 @@ window.serializeForIOS = serializeForIOS = (obj, depth=3) ->
 window.onbeforeunload = (e) ->
   leavingMessage = _.result(window.currentView, 'onLeaveMessage')
   if leavingMessage
+    # Custom messages don't work any more, main browsers just show generic ones. So, this could be refactored.
     return leavingMessage
   else
     return

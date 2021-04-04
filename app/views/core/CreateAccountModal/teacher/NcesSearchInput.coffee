@@ -1,3 +1,4 @@
+require 'app/styles/modal/create-account-modal/nces-search-input.sass'
 algolia = require 'core/services/algolia'
 DISTRICT_NCES_KEYS = ['district', 'district_id', 'district_schools', 'district_students']
 SCHOOL_NCES_KEYS = DISTRICT_NCES_KEYS.concat(['id', 'name', 'students', 'phone'])
@@ -40,6 +41,9 @@ NcesSearchInput = Vue.extend
       @searchNces(value)
 
     searchNces: (term) ->
+      return if me.get('country') and me.get('country') isnt 'united-states'
+      # don't do any of the NCES-based autocomplete stuff
+      # unless the user manually specifies "United States" as the country, then turn it back on
       @suggestions = []
       @filledSuggestion = ''
       algolia.schoolsIndex.search(term, { hitsPerPage: 5, aroundLatLngViaIP: false })
@@ -64,8 +68,5 @@ NcesSearchInput = Vue.extend
   
   watch:
     initialValue: (@value) ->
-
-  mounted: ->
-    @$refs.focus.focus()
 
 module.exports = NcesSearchInput

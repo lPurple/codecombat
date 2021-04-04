@@ -1,3 +1,4 @@
+require('app/styles/teachers/share-licenses-modal.sass')
 ModalView = require 'views/core/ModalView'
 State = require 'models/State'
 TrialRequests = require 'collections/TrialRequests'
@@ -46,6 +47,9 @@ ShareLicensesComponent = Vue.extend
       @$store.dispatch('modal/addTeacher', @teacherSearchInput).then =>
         # Send an event back to backbone-land so it can update its model
         @$emit 'setJoiners', @prepaid._id, @rawJoiners
+    revokeJoiner: (prepaidID, joiner) ->
+      @$store.dispatch('modal/revokeTeacher', {prepaidID: prepaidID, userID: joiner._id}).then =>
+        @$emit 'setJoiners', prepaidID, @rawJoiners
   created: ->
   destroyed: ->
     @$store.commit('modal/clearData')

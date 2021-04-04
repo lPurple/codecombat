@@ -1,8 +1,12 @@
+require('app/styles/editor/thang/colors_tab.sass')
 CocoView = require 'views/core/CocoView'
 template = require 'templates/editor/thang/colors_tab'
 SpriteBuilder = require 'lib/sprites/SpriteBuilder'
-{hexToHSL} = require 'core/utils'
-require 'vendor/treema'
+{hexToHSL, hslToHex} = require 'core/utils'
+require 'lib/setupTreema'
+createjs = require 'lib/createjs-parts'
+initSlider = require 'lib/initSlider'
+ColorCalculator = require('./hslCalculator.vue').default
 
 module.exports = class ThangTypeColorsTabView extends CocoView
   id: 'editor-thang-colors-tab-view'
@@ -14,7 +18,8 @@ module.exports = class ThangTypeColorsTabView extends CocoView
   constructor: (@thangType, options) ->
     super options
     @supermodel.loadModel @thangType
-    @colorConfig = {hue: 0, saturation: 0.5, lightness: 0.5}
+    @currentColorConfig = { hue: 0, saturation: 0.5, lightness: 0.5 }
+    # tint slug and index pairs.
     @spriteBuilder = new SpriteBuilder(@thangType) if @thangType.get('raw')
     f = =>
       @offset++
@@ -23,6 +28,7 @@ module.exports = class ThangTypeColorsTabView extends CocoView
 
   destroy: ->
     @colorGroups?.destroy()
+    @colorCalculator?.$destroy()
     clearInterval @interval
     super()
 
@@ -34,24 +40,32 @@ module.exports = class ThangTypeColorsTabView extends CocoView
     @initSliders()
     @tryToBuild()
 
+    # Attach a stateless color calculator widget
+    @colorCalculator = new ColorCalculator({ el: '#color-calculator' })
+
   # sliders
 
   initSliders: ->
-    @hueSlider = @initSlider $('#hue-slider', @$el), 0, @makeSliderCallback 'hue'
-    @saturationSlider = @initSlider $('#saturation-slider', @$el), 50, @makeSliderCallback 'saturation'
-    @lightnessSlider = @initSlider $('#lightness-slider', @$el), 50, @makeSliderCallback 'lightness'
+    @hueSlider = initSlider $('#hue-slider', @$el), 0, @makeSliderCallback 'hue'
+    @saturationSlider = initSlider $('#saturation-slider', @$el), 50, @makeSliderCallback 'saturation'
+    @lightnessSlider = initSlider $('#lightness-slider', @$el), 50, @makeSliderCallback 'lightness'
 
   makeSliderCallback: (property) ->
     (e, result) =>
-      @colorConfig[property] = result.value / 100
+      @currentColorConfig[property] = result.value / 100
       @updateMovieClip()
+
+  getColorConfig: ->
+    colorConfig = {}
+    colorConfig[@currentColorGroupTreema.keyForParent] = @currentColorConfig
+    return colorConfig
 
   # movie clip
 
   initStage: ->
     canvas = @$el.find('#tinting-display')
     @stage = new createjs.Stage(canvas[0])
-    createjs.Ticker.setFPS 20
+    createjs.Ticker.framerate = 20
     createjs.Ticker.addEventListener('tick', @stage)
     @updateMovieClip()
 
@@ -63,8 +77,7 @@ module.exports = class ThangTypeColorsTabView extends CocoView
     animation = animations[index]
     return @updateContainer() unless animation
     @stage.removeChild(@movieClip) if @movieClip
-    options = {colorConfig: {}}
-    options.colorConfig[@currentColorGroupTreema.keyForParent] = @colorConfig
+    options = { colorConfig: @getColorConfig() }
     @spriteBuilder.setOptions options
     @spriteBuilder.buildColorMaps()
     @movieClip = @spriteBuilder.buildMovieClip animation
@@ -83,7 +96,7 @@ module.exports = class ThangTypeColorsTabView extends CocoView
     @stage.removeChild(@container) if @container
     return unless idle?.container
     options = {colorConfig: {}}
-    options.colorConfig[@currentColorGroupTreema.keyForParent] = @colorConfig
+    options.colorConfig[@currentColorGroupTreema.keyForParent] = @currentColorConfig
     @spriteBuilder.setOptions options
     @spriteBuilder.buildColorMaps()
     @container = @spriteBuilder.buildContainerFromStore idle.container
@@ -96,6 +109,26 @@ module.exports = class ThangTypeColorsTabView extends CocoView
 
   createShapeButtons: ->
     buttons = $('<div></div>').prop('id', 'shape-buttons')
+    inputSelectionDiv = $('<div></div>')
+    inputSelectionDiv.css('margin-bottom', '15px')
+
+    input = $('<input id="color-select" placeholder="#ffdd01"/>')
+    input.css('width', '65px')
+    inputSelectionDiv.append(input)
+
+    inputBtn = $('<button>Select hex color</button>')
+    inputBtn.click(() =>
+      input = document.getElementById("color-select").value
+      @buttons.children('button').each(() ->
+        if $(this).val().toLowerCase() == input.toLowerCase().trim()
+          $(this).toggleClass('selected')
+      )
+      @updateColorGroup()
+    )
+
+    inputSelectionDiv.append(inputBtn)
+    buttons.append(inputSelectionDiv)
+
     shapes = (shape for key, shape of @thangType.get('raw')?.shapes or {})
     colors = (s.fc for s in shapes when s.fc?)
     colors = _.uniq(colors)
